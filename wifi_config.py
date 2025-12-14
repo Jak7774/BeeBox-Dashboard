@@ -1,0 +1,2 @@
+WIFI_SSID = "Jabbie"
+WIFI_PASSWORD = "05BrayW1ckC0urtKt27sQ"

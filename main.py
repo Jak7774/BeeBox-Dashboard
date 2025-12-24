@@ -14,13 +14,13 @@ from beebox_fetch import get_hive_data
 from beebox_temp_display import display_temp_quadrants
 from beebox_humid_display import display_humidity_halves
 from beebox_weight_display import display_weight_single
+import ota # To Update Scripts
 
 STATE_FILE = "config.json"
 IMAGE_FILE = "Images/BeeBox.rgb"
 
 SETTINGS_CACHE = {}
 settings_lock = _thread.allocate_lock()
-
 
 # ===== BUTTONS =====
 BTN_UP = machine.Pin(2, machine.Pin.IN, machine.Pin.PULL_UP)
@@ -32,6 +32,7 @@ debounce_ms = 50
 last_press = 0
 
 # ===== GLOBALS =====
+initial_fetch_complete = False
 menu_active = False
 background_thread_started = False
 updating_data = False
@@ -41,6 +42,14 @@ lcd = lcd_display.lcd
 data_lock = _thread.allocate_lock()
 current_data = []
 data_fresh = False
+
+# ===== Background fetch =====
+HIVE_FETCH_INTERVAL_SEC = 30 * 60  # 30 minutes
+SAFE_FETCH_RETRIES = 10
+SAFE_FETCH_DELAY = 5  # seconds between retries
+
+# ==== OTA timing ====
+last_ota_check = 0
 
 # ==== Screen Globals ===
 CONTENT_X = 8
@@ -56,7 +65,6 @@ def is_first_time():
         return True
     except ValueError:
         return True
-
 
 def mark_setup_complete():
     state = load_state()
@@ -111,9 +119,9 @@ def show_first_time_message():
     blue = lcd_display.colour(0, 120, 255)
     white = lcd_display.colour(255, 255, 255)
 
-    lcd.text("BeeBox Display", 16, 28, blue)
-    lcd.text("Welcome!", 10, 54, white)
-    lcd.text("Launching Wi-Fi", 6, 86, white)
+    lcd.text("BeeBox Display", 10, 28, blue)
+    lcd.text("Welcome!", 30, 54, white)
+    lcd.text("Launching wifi", 6, 86, white)
     lcd.text("setup...", 42, 98, white)
     lcd.show()
     utime.sleep(4)
@@ -139,77 +147,92 @@ def wifi_connected():
         return False
 
 # ==== Background updater (safe + interruptible) ====
-# ==== Robust background updater ====
 def background_updater():
     """
-    Background thread that periodically fetches hive data.
-    Only reconnects if actual connectivity fails.
-    Safe to interrupt with `stop_threads = True`.
+    Background thread: periodically fetch hive data.
+    OTA checks are performed only after hive data fetch succeeds.
+    Safe for MicroPython threading and Wi-Fi instability.
     """
-    global current_data, data_fresh, menu_active, stop_threads
+    global current_data, data_fresh, menu_active, stop_threads, initial_fetch_complete, last_ota_check
 
     utime.sleep(5)
-    print("[BG] Background updater stkarted")
-
-    def ping_test(host="8.8.8.8", port=53, timeout=2):
-        """Return True if we can reach the host (basic connectivity test)."""
-        try:
-            s = wifi_utils.socket.socket()
-            s.settimeout(timeout)
-            s.connect((host, port))
-            s.close()
-            return True
-        except:
-            return False
+    print("[BG] Background updater started")
 
     while not stop_threads:
         try:
-            # Only fetch if menu is not active
-            if not menu_active:
-                print("[BG] Checking Wi-Fi connection...")
-                if wifi_utils.is_connected() and ping_test():
-                    print("[BG] Wi-Fi OK, fetching hive data...")
-                    try:
-                        data = None
-                        for attempt in range(3):
-                            try:
-                                data = get_hive_data()
-                                break
-                            except Exception as e:
-                                print(f"[BG] Fetch attempt {attempt+1} failed:", e)
-                                utime.sleep(1)
+            if menu_active:
+                utime.sleep(1)
+                continue  # Skip fetch if menu is active
 
-                        if data is not None:
-                            with data_lock:
-                                current_data = data
-                                data_fresh = True
-                                print("[BG] Fetched data:", data)
-                        else:
-                            print("[BG] Failed to fetch hive data after retries")
-                            draw_error(lcd, "Fetch Failed")
-                    except Exception as e:
-                        print("[BG] Unexpected fetch error:", e)
-                        draw_error(lcd, "Fetch Error")
-                else:
-                    print("[BG] Wi-Fi not reachable, reconnecting...")
-                    draw_error(lcd, "Wi-Fi reconnect")
-                    if wifi_utils.connect_to_wifi(timeout=10):
-                        print("[BG] Reconnected to Wi-Fi")
-                    else:
-                        print("[BG] Wi-Fi reconnect failed")
-                        draw_error(lcd, "Wi-Fi Error")
+            print("[BG] Checking Wi-Fi connection...")
+            if not wifi_utils.is_connected():
+                print("[BG] Wi-Fi not connected, attempting reconnect...")
+                draw_error(lcd, "Wi-Fi reconnect")
+                if not wifi_utils.connect_to_wifi(timeout=10):
+                    print("[BG] Wi-Fi reconnect failed")
+                    draw_error(lcd, "Wi-Fi Error")
+                    utime.sleep(5)
+                    continue
+                print("[BG] Reconnected to Wi-Fi")
+
+            # --- Fetch hive data safely ---
+            data = None
+            for attempt in range(SAFE_FETCH_RETRIES):
+                try:
+                    data = get_hive_data()
+                    if data:
+                        break
+                except Exception as e:
+                    print(f"[BG] Fetch attempt {attempt+1} failed:", e)
+                    utime.sleep(SAFE_FETCH_DELAY)
+
+            if data:
+                with data_lock:
+                    current_data = data
+                    data_fresh = True
+                    print("[BG] Fetched hive data:", data)
+                initial_fetch_complete = True
+            else:
+                print("[BG] Failed to fetch hive data after retries")
+                draw_error(lcd, "Fetch Failed")
+                utime.sleep(5)
+                continue
+
+            # --- OTA check AFTER successful data fetch ---
+            try:
+                state = load_state()
+                interval_hours = state.get("check_interval_hours", 24)
+                interval_sec = max(3600, interval_hours * 3600)
+                now = utime.time()
+
+                if now - last_ota_check > interval_sec:
+                    print("[BG] OTA check triggered")
+                    ota.safe_ota()
+                    last_ota_check = now
+            except Exception as e:
+                print("[BG] OTA error:", e)
 
         except Exception as e:
             print("[BG] Unexpected background error:", e)
             draw_error(lcd, "BG Error")
 
-        # Wait according to update_period (or exit early if stop_threads/menu_active)
-        with settings_lock:
-            update_period = SETTINGS_CACHE.get("update_period", 300)
-        for _ in range(update_period):
+        # Wait for the global fetch interval before next iteration
+        for _ in range(HIVE_FETCH_INTERVAL_SEC):
             if stop_threads or menu_active:
                 break
             utime.sleep(1)
+
+def reboot_if_pending():
+    try:
+        state = load_state()
+        if state.get("pending_reboot", False):
+            print("[MAIN] OTA update complete — rebooting")
+            state["pending_reboot"] = False
+            save_state(state)
+            utime.sleep(1)
+            machine.reset()
+    except Exception as e:
+        print("[MAIN] Reboot check failed:", e)
 
 # ==== Loading screen (hourglass) ====
 def show_loading_screen():
@@ -439,18 +462,12 @@ def display_sensor_loop(mode):
     menu_active = False
     print(f"Displaying {mode} data...")
     
-    wait_start = utime.ticks_ms()
-    while True:
-        with data_lock:
-            if current_data:
-                break
-        if utime.ticks_diff(utime.ticks_ms(), wait_start) > 15000:  # 15s timeout
-            lcd.fill(lcd_display.colour(0,0,0))
-            lcd.text("No data", 30, 60, lcd_display.colour(255,0,0))
-            lcd.show()
-            break
-        utime.sleep_ms(200)
-
+    # --- Startup wait: do NOT timeout ---
+    while not initial_fetch_complete:
+        lcd.fill(lcd_display.colour(0, 0, 0))
+        lcd.text("Connecting...", 20, 50, lcd_display.colour(200, 200, 200))
+        lcd.show()
+        utime.sleep(1)
 
     # --- Continuous display loop ---
     while True:
@@ -594,14 +611,13 @@ def main():
         if is_first_time():
             print("[MAIN] First time setup detected")
             show_first_time_message()
-            # Comment out Wi-Fi setup temporarily to test thread
-            # wifi_setup.main_menu()
+            wifi_setup.main_menu()
             mark_setup_complete()
 
         global SETTINGS_CACHE
         SETTINGS_CACHE = settings_config.load_settings()
         print("[MAIN] Settings loaded:", SETTINGS_CACHE)
-
+        
         # Start background updater once
         if not background_thread_started:
             try:
@@ -613,6 +629,7 @@ def main():
 
         # Resume last viewed dashboard
         while True:
+            reboot_if_pending()
             state = load_state()
             last_mode = state.get("last_sensor_mode", "sensor_all")
             print("[MAIN] Resuming dashboard mode:", last_mode)

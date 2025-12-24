@@ -107,9 +107,13 @@ def get_hive_data():
     wifi_utils.connect_to_wifi()
     html = fetch_webpage()
     if not html:
+        #print("[DEBUG] fetch_webpage returned None")
         return []
-
+    
+    #print("[DEBUG] HTML fetched, length:", len(html))
     raw_hives = parse_html_by_hive(html)
+    #print("[DEBUG] raw_hives:", raw_hives)
+
     formatted_hives = []
 
     for hive in raw_hives:
@@ -124,4 +128,3 @@ def get_hive_data():
         })
 
     return formatted_hives
-

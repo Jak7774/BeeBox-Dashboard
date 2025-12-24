@@ -196,6 +196,7 @@ def select_network(networks):
                 break
             y = 30 + i * 18
             s = networks[j]
+            max_chars = CONTENT_W // CHAR_W
 
             # determine background color
             if j == idx:
@@ -282,9 +283,10 @@ def show_config():
         lcd.text("PWD: ********", 10, 70, colour(200,200,200))
     else:
         lcd.text("No config found.", 10, 50, colour(255,100,100))
-
+    
+    lcd.fill(colour(0,0,0))  # clear again before returning to menu
     lcd.show()
-    utime.sleep(2)
+    utime.sleep(5)
 
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
@@ -292,7 +294,8 @@ def connect_wifi():
     
     ssid, password = load_wifi_credentials()
     if not ssid:
-        lcd.text("No Wi-Fi config", 10, 60, colour(255,0,0))
+        lcd.fill(colour(0,0,0))  # clear again before returning to menu
+        lcd.text("No config found",  10, 60, colour(255,0,0))
         lcd.show()
         utime.sleep(2)
         return
@@ -317,9 +320,59 @@ def connect_wifi():
     utime.sleep(2)
 
 def main_menu():
-    menu_items = ["Setup Wifi", "Connect Wifi", "Show Config", "Launch Dashboard"]
     global last_press
+
+    ssid, password = load_wifi_credentials()
+
+    # Case 1: Wi-Fi config exists → try to connect and show launch prompt
+    if ssid and password:
+        wlan = network.WLAN(network.STA_IF)
+        wlan.active(True)
+
+        lcd.fill(colour(0,0,0))
+        lcd.text("Connecting to Wi-Fi...", 5, 50, colour(255,255,0))
+        lcd.show()
+
+        wlan.connect(ssid, password)
+        connected = False
+        for _ in range(20):  # try for ~10 seconds
+            if wlan.isconnected():
+                connected = True
+                break
+            utime.sleep(0.5)
+
+        if connected:
+            # Show "Launch Dashboard" prompt
+            lcd.fill(colour(0,0,0))
+            lcd.text("Connected!", 20, 40, colour(0,255,0))
+            lcd.text("Press OK to", 10, 70, colour(255,255,255))
+            lcd.text("Launch Dashboard", 0, 90, colour(255,255,255))
+            lcd.show()
+
+            # Wait for user to press SELECT/OK
+            while True:
+                if key0.value() == 0:  # SELECT button
+                    wait_release(key0)
+                    last_press = utime.ticks_ms()
+                    return True  # signal main.py to launch dashboard
+                elif key3.value() == 0:  # BACK button cancels
+                    wait_release(key3)
+                    last_press = utime.ticks_ms()
+                    return False
+                utime.sleep_ms(50)
+
+        else:
+            lcd.fill(colour(0,0,0))
+            lcd.text("Wi-Fi failed", 20, 50, colour(255,0,0))
+            lcd.text("Please setup Wi-Fi", 5, 80, colour(255,255,255))
+            lcd.show()
+            utime.sleep(2)
+            # Fall back to menu
+
+    # Case 2: No Wi-Fi config or failed connection → show setup menu
+    menu_items = ["Setup Wifi", "Connect Wifi", "Show Config"]
     idx = 0
+
     while True:
         lcd.fill(colour(0,0,0))
         lcd.text("Wifi Menu", 20, 10, colour(255,255,0))
@@ -338,15 +391,18 @@ def main_menu():
             utime.sleep_ms(30)
             continue
 
-        if key1.value() == 0:  # UP
+        # UP
+        if key1.value() == 0:
             wait_release(key1)
             last_press = utime.ticks_ms()
             idx = (idx - 1) % len(menu_items)
-        elif key2.value() == 0:  # DOWN
+        # DOWN
+        elif key2.value() == 0:
             wait_release(key2)
             last_press = utime.ticks_ms()
             idx = (idx + 1) % len(menu_items)
-        elif key0.value() == 0:  # OK
+        # OK
+        elif key0.value() == 0:
             wait_release(key0)
             last_press = utime.ticks_ms()
             choice = menu_items[idx]
@@ -372,13 +428,8 @@ def main_menu():
                 connect_wifi()
             elif choice == "Show Config":
                 show_config()
-            elif choice == "Launch Dashboard":
-                lcd.fill(colour(0,0,0))
-                lcd.text("Welcome!", 40, 60, colour(255,255,0))
-                lcd.show()
-                utime.sleep(1)
-                break
-        elif key3.value() == 0:  # BACK
+        # BACK
+        elif key3.value() == 0:
             wait_release(key3)
             last_press = utime.ticks_ms()
             lcd.fill(colour(0,0,0))
@@ -386,6 +437,9 @@ def main_menu():
             lcd.show()
             utime.sleep(1)
             break
+
+    return False  # dashboard should not launch automatically
+
 
 # === Run ===
 #main_menu()

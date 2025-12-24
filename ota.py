@@ -1,167 +1,129 @@
-# ===== ota.py =====
-import urequests
+import urequests as requests
+import ujson
 import os
 import time
-import machine
+import shutil
 
-# ================= CONFIG =================
-BASE_URL = "https://raw.githubusercontent.com/YOUR_GITHUB/YOUR_REPO/main/"
+# --- Configurable globals ---
+CONFIG_FILE = "config.json"
+UPDATE_FOLDER = "UPDATE"
+OLD_FOLDER = "OLD"
 
-VERSION_FILE = "version.txt"
-MANIFEST_FILE = "manifest.json"
+# --- Load config ---
+with open(CONFIG_FILE) as f:
+    config = ujson.load(f)
 
-UPDATE_DIR = "Update"
-LAST_CHECK_FILE = "last_ota_check.txt"
+GITHUB_URL = config.get("github_repo_url")
+LOCAL_VERSION = config.get("version")
+CHECK_INTERVAL_HOURS = config.get("check_interval_hours", 24)
 
-# Change this later without touching main.py
-UPDATE_INTERVAL = 7 * 24 * 60 * 60   # 1 week
-# =========================================
-
-
-# ---------- File helpers ----------
-def _read(path, default=""):
+# --- Helper functions ---
+def fetch_text(url):
     try:
-        with open(path, "r") as f:
-            return f.read().strip()
-    except:
-        return default
-
-def _write(path, data):
-    with open(path, "w") as f:
-        f.write(data)
-
-def _now():
-    try:
-        return time.time()
-    except:
-        return 0
-
-
-# ---------- Timing ----------
-def _should_check():
-    try:
-        last = int(_read(LAST_CHECK_FILE, "0"))
-    except:
-        return True
-    return (_now() - last) >= UPDATE_INTERVAL
-
-def _mark_checked():
-    _write(LAST_CHECK_FILE, str(_now()))
-
-
-# ---------- Version ----------
-def _local_version():
-    return _read(VERSION_FILE, "0.0.0")
-
-def _remote_version():
-    r = urequests.get(BASE_URL + VERSION_FILE, timeout=5)
-    v = r.text.strip()
-    r.close()
-    return v
-
-
-# ---------- OTA helpers ----------
-def _ensure_update_dir():
-    if UPDATE_DIR not in os.listdir():
-        os.mkdir(UPDATE_DIR)
-
-def _download_file(rel_path):
-    url = BASE_URL + rel_path
-    local_path = UPDATE_DIR + "/" + rel_path
-
-    # Ensure subdirectories exist
-    parts = local_path.split("/")[:-1]
-    path = ""
-    for p in parts:
-        path = p if not path else path + "/" + p
-        if path and path not in os.listdir("/" if "/" not in path else path.rsplit("/", 1)[0]):
-            try:
-                os.mkdir(path)
-            except:
-                pass
-
-    r = urequests.get(url, timeout=10)
-    with open(local_path, "w") as f:
-        f.write(r.text)
-    r.close()
-
-
-def _load_manifest():
-    r = urequests.get(BASE_URL + MANIFEST_FILE, timeout=5)
-    data = r.json()
-    r.close()
-    return data.get("files", [])
-
-
-def _apply_update(files):
-    for file in files:
-        src = UPDATE_DIR + "/" + file
-        if src not in _walk_files(UPDATE_DIR):
-            raise Exception("Missing file: " + file)
-
-        if file in os.listdir():
-            os.remove(file)
-
-        os.rename(src, file)
-
-
-def _walk_files(root):
-    found = []
-    for entry in os.listdir(root):
-        path = root + "/" + entry
-        try:
-            os.listdir(path)
-            found.extend(_walk_files(path))
-        except:
-            found.append(path)
-    return found
-
-
-# ---------- OTA core ----------
-def _perform_update():
-    print("OTA: Checking versions")
-
-    remote = _remote_version()
-    local = _local_version()
-
-    if remote == local:
-        print("OTA: Already up to date")
-        return False
-
-    print("OTA: New version", remote)
-
-    files = _load_manifest()
-    _ensure_update_dir()
-
-    # Download all files first
-    for file in files:
-        print("OTA: Downloading", file)
-        _download_file(file)
-
-    # Replace files only after successful download
-    print("OTA: Applying update")
-    _apply_update(files)
-
-    _write(VERSION_FILE, remote)
-
-    print("OTA: Update complete, rebooting")
-    time.sleep(1)
-    machine.reset()
-
-
-# ---------- Public API ----------
-def maybe_check(force=False):
-    """
-    Called by main.py
-    force=True  -> always check
-    force=False -> interval-based
-    """
-    try:
-        if not force and not _should_check():
-            return
-
-        _mark_checked()
-        _perform_update()
-
+        r = requests.get(url)
+        if r.status_code == 200:
+            return r.text
     except Exception as e:
-        print("OTA failed:", e)
+        print("Fetch failed:", e)
+    return None
+
+def fetch_json(url):
+    text = fetch_text(url)
+    if text:
+        try:
+            return ujson.loads(text)
+        except Exception as e:
+            print("JSON parse failed:", e)
+    return None
+
+def download_file(file_name):
+    url = GITHUB_URL + file_name
+    dest_path = f"{UPDATE_FOLDER}/{file_name}"
+    try:
+        content = fetch_text(url)
+        if content is not None:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            with open(dest_path, "w") as f:
+                f.write(content)
+            return True
+    except Exception as e:
+        print("Download failed:", file_name, e)
+    return False
+
+def backup_files(file_list):
+    os.makedirs(OLD_FOLDER, exist_ok=True)
+    for f in file_list:
+        if os.path.exists(f):
+            os.makedirs(os.path.dirname(f"{OLD_FOLDER}/{f}"), exist_ok=True)
+            shutil.copy(f, f"{OLD_FOLDER}/{f}")
+
+def replace_files(file_list):
+    for f in file_list:
+        src = f"{UPDATE_FOLDER}/{f}"
+        if os.path.exists(src):
+            shutil.copy(src, f)
+        else:
+            print("Missing update file:", f)
+            return False
+    return True
+
+def verify_files(file_list):
+    for f in file_list:
+        if not os.path.exists(f):
+            print("Verification failed:", f)
+            return False
+    return True
+
+# --- Main OTA process ---
+def ota_update():
+    global LOCAL_VERSION
+    print("Checking for updates...")
+    
+    latest_version = fetch_text(GITHUB_URL + "version.txt")
+    if not latest_version or latest_version.strip() == LOCAL_VERSION:
+        print("Already up-to-date.")
+        return
+    
+    latest_version = latest_version.strip()
+    print(f"New version found: {latest_version}")
+    
+    file_list_json = fetch_json(GITHUB_URL + "file_list.json")
+    if not file_list_json or "files" not in file_list_json:
+        print("Failed to fetch file list")
+        return
+    
+    files_to_update = file_list_json["files"]
+
+    # Step 1: Download to UPDATE folder
+    os.makedirs(UPDATE_FOLDER, exist_ok=True)
+    for f in files_to_update:
+        if not download_file(f):
+            print("Download failed, will retry later")
+            return
+    
+    # Step 2: Backup existing files
+    backup_files(files_to_update)
+    
+    # Step 3: Replace files
+    if not replace_files(files_to_update):
+        print("Update failed, restoring OLD files")
+        replace_files([f"{OLD_FOLDER}/{f}" for f in files_to_update])
+        return
+    
+    # Step 4: Verify
+    if verify_files(files_to_update):
+        print("Update successful!")
+        # Update local version
+        config["version"] = latest_version
+        with open(CONFIG_FILE, "w") as f:
+            ujson.dump(config, f)
+    else:
+        print("Verification failed, restoring OLD files")
+        replace_files([f"{OLD_FOLDER}/{f}" for f in files_to_update])
+
+# --- Periodic check ---
+while True:
+    ota_update()
+    print(f"Next check in {CHECK_INTERVAL_HOURS} hours...")
+    time.sleep(CHECK_INTERVAL_HOURS * 3600)

@@ -1,1 +1,1 @@
-{"setup_complete": true, "last_sensor_mode": "sensor_temp", "device_phrase": "b33b0xdashb0ard123!"}
+{"setup_complete": true, "last_sensor_mode": "sensor_temp", "device_phrase": "b33b0xdashb0ard123!", "version": "1.0.0", "check_interval_hours": 24, "github_repo_url": "https://raw.githubusercontent.com/jak7774/BeeBox-Dashboard/main/"}

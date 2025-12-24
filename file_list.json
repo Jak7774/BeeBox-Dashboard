@@ -1,41 +1,152 @@
 {
     "files": [
-        "beebox_display_helpers.py",
-        "beebox_fetch.py",
-        "beebox_humid_display.py",
-        "beebox_temp_display.py",
-        "beebox_weight_display.py",
-        "config.json",
-        "Create_FileList.py",
-        "file_list.json",
-        "lcd_display.py",
-        "main.py",
-        "MoveFiles.py",
-        "ota.py",
-        "Sensors_TextSummary.py",
-        "settings.json",
-        "settings_config.py",
-        "wifi_encryption.py",
-        "wifi_setup.py",
-        "wifi_storage.py",
-        "wifi_utils.py",
-        "Images/BeeBox.rgb",
-        "Images/hourglass.rgb",
-        "Images/humidity.rgb",
-        "Images/temperature.rgb",
-        "Images/weight.rgb",
-        "Images/numbers/-.rgb",
-        "Images/numbers/..rgb",
-        "Images/numbers/0.rgb",
-        "Images/numbers/1.rgb",
-        "Images/numbers/2.rgb",
-        "Images/numbers/3.rgb",
-        "Images/numbers/4.rgb",
-        "Images/numbers/5.rgb",
-        "Images/numbers/6.rgb",
-        "Images/numbers/7.rgb",
-        "Images/numbers/8.rgb",
-        "Images/numbers/9.rgb",
-        "Images/numbers/minus.rgb"
+        {
+            "path": "beebox_display_helpers.py",
+            "sha256": "fc5d6cc3f3cd6ef5638375896141a2253ccd1783ec1d62725c1f999a5ed5f86b"
+        },
+        {
+            "path": "beebox_fetch.py",
+            "sha256": "3f70dc1c19d8ab011cab85c6895644814b785b5800b78a03abfdac4d62bf2451"
+        },
+        {
+            "path": "beebox_humid_display.py",
+            "sha256": "6ccf57fb1a94c327a1f3be216bd559c8a9d3274e866c54c69147b35f84a2d08e"
+        },
+        {
+            "path": "beebox_temp_display.py",
+            "sha256": "e6425e8ffc3d39976812f4fd1f9fdbd763f66eb90ae04b94ad3f26035fe69612"
+        },
+        {
+            "path": "beebox_weight_display.py",
+            "sha256": "65b2bdaf9efa71a508e9e95e552b8b91028069ecf3fd547a59b7a3460e0cdc4f"
+        },
+        {
+            "path": "config.json",
+            "sha256": "3a7566c2c37e7213e4a02e6a295573a50e933d2469242c4093bd9053cff50ff6"
+        },
+        {
+            "path": "Create_FileList.py",
+            "sha256": "68dd9bfd31a776a06632252d757db51f89aa3a78bcfc5c66eae6e99aeaecb886"
+        },
+        {
+            "path": "file_list.json",
+            "sha256": "45f47091e3e030f8a1b75e08b8ef605e866c8314e3ec978feb47114bff5142f6"
+        },
+        {
+            "path": "lcd_display.py",
+            "sha256": "b0c7eaf3882ee8ec1e35d42332621686abfcac4c1507b9d4e8f230c686c1e063"
+        },
+        {
+            "path": "main.py",
+            "sha256": "ad104f4f6f4a14bce51f46d609958b6e1802f798f200f01a6d022b2aff7685e6"
+        },
+        {
+            "path": "MoveFiles.py",
+            "sha256": "34f39ce9dfcaf5d2ef24a0d3402e7f109cd2603420074403fc1bf0f226a35b47"
+        },
+        {
+            "path": "ota.py",
+            "sha256": "5f5373581e7fc3ad8db9e7aa72cfb2f2e1f1ac4c9fe8e57e700ed4f7ad522227"
+        },
+        {
+            "path": "Sensors_TextSummary.py",
+            "sha256": "4d856fe2f01d00cb7398124a03e96e543189aa312dda5202bf3eeea9e92176da"
+        },
+        {
+            "path": "settings.json",
+            "sha256": "d42c220031b519b417ea4d117dcbe3fd375b5859dd2ba551596491d046859ff4"
+        },
+        {
+            "path": "settings_config.py",
+            "sha256": "b044050356a31a32267d8054af221726971c43dff52ab72635aef71f806e8316"
+        },
+        {
+            "path": "wifi_encryption.py",
+            "sha256": "46988d2da99f7075bb363f4389e3eda062bb7a1a95e97a809ed10e8cb3351963"
+        },
+        {
+            "path": "wifi_setup.py",
+            "sha256": "1f922247f254a02978f1bdb4b15bb42b9796056c22654ccd0dd9b488b1ac372b"
+        },
+        {
+            "path": "wifi_storage.py",
+            "sha256": "512b0104b633f6e6638907eaa8b26589e54f6bcc384044281b347336ade852b8"
+        },
+        {
+            "path": "wifi_utils.py",
+            "sha256": "684bbe1f8e1b0b6e1508a2016eb32a75d3eb1ccfdbf7de0cceafc990a104b3f9"
+        },
+        {
+            "path": "Images/BeeBox.rgb",
+            "sha256": "7d838ecbf0a8f49b2870a788ab4e334897f621e9ea4a11b60b6d07ec1f81aab1"
+        },
+        {
+            "path": "Images/hourglass.rgb",
+            "sha256": "f72b041f1fb6f779bbd8d862d675c26a041a920cd31ef65a295b93e977b12194"
+        },
+        {
+            "path": "Images/humidity.rgb",
+            "sha256": "203cfa9acbcb66f46244585bd521a8c016a3d3fe7ea8bbd894f112f67490c2ab"
+        },
+        {
+            "path": "Images/temperature.rgb",
+            "sha256": "3299ceb937c2511ca164b9565b9f564758f07392d194c6150dacf24d4d7e2f46"
+        },
+        {
+            "path": "Images/weight.rgb",
+            "sha256": "640e9d374a95dfdffdbba7c2cedf33b3a1515ae911865aaed2bad193d7c6c7d9"
+        },
+        {
+            "path": "Images/numbers/-.rgb",
+            "sha256": "61d201ccbc5cec7284985d1ac6d1d7b8f45cac69c2fc4915865fb557e7f5f4fa"
+        },
+        {
+            "path": "Images/numbers/..rgb",
+            "sha256": "9b5f0739836e1255e0b22fd8e161a3601595933485c0718229c61f206be95444"
+        },
+        {
+            "path": "Images/numbers/0.rgb",
+            "sha256": "f8cd059da493386c77142e62703857c873b9341797ff6a80b311e4f09717927e"
+        },
+        {
+            "path": "Images/numbers/1.rgb",
+            "sha256": "a38d1ece36fe7fab01303867b32790d97a0005425aa6d805bb2e12ca1552228f"
+        },
+        {
+            "path": "Images/numbers/2.rgb",
+            "sha256": "d8c75e24f1dd493f3b476ee0324a51f14454a3ed1a92bb06d997189cca004a14"
+        },
+        {
+            "path": "Images/numbers/3.rgb",
+            "sha256": "bde5cfe3a444ed2597092843366efffc194a066580d0017411cd705d5e2a3aee"
+        },
+        {
+            "path": "Images/numbers/4.rgb",
+            "sha256": "7a96d2eff6bd057a7ed08314c0bd6fec6ee2b72d077eecae079d01d45185fb5d"
+        },
+        {
+            "path": "Images/numbers/5.rgb",
+            "sha256": "a4fe0f9dcd0ab4f85b17ea5a6859d3135cd0ff57e3a63a4bfa000ecc57a0ffb8"
+        },
+        {
+            "path": "Images/numbers/6.rgb",
+            "sha256": "9612179ae88408448b5a2163cf8edafe7c9efccbd23b1e0d2620f6b38a18b322"
+        },
+        {
+            "path": "Images/numbers/7.rgb",
+            "sha256": "3ff9d26ea371fe19d25422fbc2fccf82a3409b6803275a839174535535f610e5"
+        },
+        {
+            "path": "Images/numbers/8.rgb",
+            "sha256": "08421bbf95c321be6635296effd382f81df8137d5686e1bd4004cdb586a612fd"
+        },
+        {
+            "path": "Images/numbers/9.rgb",
+            "sha256": "469c72ade741e1bfce4bddf5aa307165208f95c6299a9c462f14f2c9838d2b81"
+        },
+        {
+            "path": "Images/numbers/minus.rgb",
+            "sha256": "4be78c4faa43f09316e1610698c8f0f0dc5657d9faa780ff923d5bc565117302"
+        }
     ]
 }

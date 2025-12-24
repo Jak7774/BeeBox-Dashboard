@@ -1,6 +1,9 @@
 # wifi_setup.py
 from machine import Pin
 import network, utime, os
+from wifi_encryption import encrypt, decrypt
+from wifi_storage import save_wifi_credentials, load_wifi_credentials
+import struct
 
 # === LCD and colour helpers ===
 try:
@@ -176,6 +179,12 @@ def select_network(networks):
     top = 0
     items_per_page = 4
     debounce_ms_fast = 100  # faster response
+    
+    scroll_offset = 0
+    scroll_pause_until = 0
+    last_scroll = utime.ticks_ms()
+    CHAR_W = 8
+    CONTENT_W = 96   # leaves space for button labels
 
     while True:
         lcd.fill(colour(0, 0, 0))
@@ -194,12 +203,38 @@ def select_network(networks):
                     lcd.fill_rect(6, y - 2, 108, 14, colour(0, 0, 150))  # dark blue
                 else:
                     lcd.fill_rect(6, y - 2, 108, 14, colour(0, 100, 200))  # normal highlight
-                lcd.text(s[:16], 10, y, colour(255, 255, 255))
-            else:
-                if j == 0:  # Manual Entry unselected
-                    lcd.text(s[:16], 10, y, colour(100, 100, 255))  # lighter blue
+                lmax_chars = CONTENT_W // CHAR_W
+                text_len = len(s)
+                max_scroll = max(0, text_len - max_chars)
+
+                now = utime.ticks_ms()
+
+                if max_scroll > 0:
+                    if scroll_pause_until:
+                        if utime.ticks_diff(now, scroll_pause_until) <= 0:
+                            scroll_offset = 0
+                            scroll_pause_until = 0
+                    elif utime.ticks_diff(now, last_scroll) > 250:
+                        last_scroll = now
+                        scroll_offset += 1
+                        if scroll_offset >= max_scroll:
+                            scroll_offset = max_scroll
+                            scroll_pause_until = utime.ticks_add(now, 5000)
                 else:
-                    lcd.text(s[:16], 10, y, colour(200, 200, 200))
+                    scroll_offset = 0
+
+                visible = s[scroll_offset:scroll_offset + max_chars]
+                lcd.text(visible, 10, y, colour(255, 255, 255))
+
+            else:
+                max_chars = CONTENT_W // CHAR_W
+                static_text = s[:max_chars]  # clip, but don't hard-code length
+
+                if j == 0:  # Manual Entry unselected
+                    lcd.text(static_text, 10, y, colour(100, 100, 255))
+                else:
+                    lcd.text(static_text, 10, y, colour(200, 200, 200))
+
 
         button_hint()
         lcd.show()
@@ -211,6 +246,8 @@ def select_network(networks):
 
         # UP
         if key1.value() == 0:
+            scroll_offset = 0
+            scroll_pause_until = 0
             last_press = utime.ticks_ms()
             idx = (idx - 1) % len(networks)
             if idx < top:
@@ -218,6 +255,8 @@ def select_network(networks):
 
         # DOWN
         elif key2.value() == 0:
+            scroll_offset = 0
+            scroll_pause_until = 0
             last_press = utime.ticks_ms()
             idx = (idx + 1) % len(networks)
             if idx >= top + items_per_page:
@@ -233,31 +272,36 @@ def select_network(networks):
             last_press = utime.ticks_ms()
             return None
 
-def save_config(ssid, password):
-    with open("wifi_config.py", "w") as f:
-        f.write(f'WIFI_SSID = "{ssid}"\n')
-        f.write(f'WIFI_PASSWORD = "{password}"\n')
-
 def show_config():
     lcd.fill(colour(0,0,0))
-    try:
-        import wifi_config
+    ssid, _ = load_wifi_credentials()
+
+    if ssid:
         lcd.text("Saved Config:", 10, 20, colour(255,255,0))
-        lcd.text(f"SSID: {wifi_config.WIFI_SSID}", 10, 50, colour(200,255,200))
+        lcd.text(f"SSID: {ssid}", 10, 50, colour(200,255,200))
         lcd.text("PWD: ********", 10, 70, colour(200,200,200))
-    except:
+    else:
         lcd.text("No config found.", 10, 50, colour(255,100,100))
+
     lcd.show()
     utime.sleep(2)
 
 def connect_wifi():
-    import wifi_config
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    
+    ssid, password = load_wifi_credentials()
+    if not ssid:
+        lcd.text("No Wi-Fi config", 10, 60, colour(255,0,0))
+        lcd.show()
+        utime.sleep(2)
+        return
+    
     lcd.fill(colour(0,0,0))
     lcd.text("Connecting...", 10, 60, colour(255,255,0))
     lcd.show()
-    wlan.connect(wifi_config.WIFI_SSID, wifi_config.WIFI_PASSWORD)
+    
+    wlan.connect(ssid, password)
     for _ in range(20):
         if wlan.isconnected():
             lcd.fill(colour(0,0,0))
@@ -266,13 +310,14 @@ def connect_wifi():
             utime.sleep(2)
             return
         utime.sleep(0.5)
+        
     lcd.fill(colour(0,0,0))
     lcd.text("Failed to connect", 10, 60, colour(255,100,100))
     lcd.show()
     utime.sleep(2)
 
 def main_menu():
-    menu_items = ["Setup Wifi", "Connect Wifi", "Show Config", "Exit"]
+    menu_items = ["Setup Wifi", "Connect Wifi", "Show Config", "Launch Dashboard"]
     global last_press
     idx = 0
     while True:
@@ -318,7 +363,7 @@ def main_menu():
                     if ssid == "Manual entry":
                         ssid = text_input("SSID:")
                     password = text_input("Password:")
-                    save_config(ssid, password)
+                    save_wifi_credentials(ssid, password)
                     lcd.fill(colour(0,0,0))
                     lcd.text("Saved!", 40, 60, colour(0,255,0))
                     lcd.show()
@@ -327,9 +372,9 @@ def main_menu():
                 connect_wifi()
             elif choice == "Show Config":
                 show_config()
-            elif choice == "Exit":
+            elif choice == "Launch Dashboard":
                 lcd.fill(colour(0,0,0))
-                lcd.text("Goodbye!", 40, 60, colour(255,255,0))
+                lcd.text("Welcome!", 40, 60, colour(255,255,0))
                 lcd.show()
                 utime.sleep(1)
                 break

@@ -3,6 +3,7 @@ import os
 import utime
 import json
 import machine
+import socket
 import _thread
 import lcd_display
 import settings_config
@@ -17,13 +18,17 @@ from beebox_weight_display import display_weight_single
 STATE_FILE = "config.json"
 IMAGE_FILE = "Images/BeeBox.rgb"
 
+SETTINGS_CACHE = {}
+settings_lock = _thread.allocate_lock()
+
+
 # ===== BUTTONS =====
 BTN_UP = machine.Pin(2, machine.Pin.IN, machine.Pin.PULL_UP)
 BTN_DOWN = machine.Pin(17, machine.Pin.IN, machine.Pin.PULL_UP)
 BTN_SELECT = machine.Pin(15, machine.Pin.IN, machine.Pin.PULL_UP)
 BTN_BACK = machine.Pin(3, machine.Pin.IN, machine.Pin.PULL_UP)
 
-debounce_ms = 200
+debounce_ms = 50
 last_press = 0
 
 # ===== GLOBALS =====
@@ -37,15 +42,19 @@ data_lock = _thread.allocate_lock()
 current_data = []
 data_fresh = False
 
+# ==== Screen Globals ===
+CONTENT_X = 8
+CONTENT_W = 96   # leaves space for button hints
+
 # ==== Setup / state ====
 def is_first_time():
-    if not STATE_FILE in os.listdir():
-        return True
     try:
         with open(STATE_FILE, "r") as f:
             state = json.load(f)
         return not state.get("setup_complete", False)
-    except:
+    except OSError:
+        return True
+    except ValueError:
         return True
 
 
@@ -54,21 +63,16 @@ def mark_setup_complete():
     state["setup_complete"] = True
     save_state(state)
 
-
 def load_state():
-    if STATE_FILE in os.listdir():
-        try:
-            with open(STATE_FILE, "r") as f:
-                return json.load(f)
-        except:
-            pass
-    return {}
-
+    try:
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
 
 def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
-
 
 # ==== Splash screen ====
 def show_splash(image_path):
@@ -93,6 +97,13 @@ def draw_error(lcd, message):
     utime.sleep(1)
     lcd.fill_rect(x, y, size, size, lcd_display.colour(0, 0, 0))  # clear after display
     lcd.show()
+    
+def draw_text_clipped(text, x, y, width, colour, scroll_offset=0):
+    char_w = 8
+    max_chars = width // char_w
+    visible = text[scroll_offset:scroll_offset + max_chars]
+    lcd.text(visible, x, y, colour)
+    return max_chars
 
 # ==== First-time setup message ====
 def show_first_time_message():
@@ -128,37 +139,77 @@ def wifi_connected():
         return False
 
 # ==== Background updater (safe + interruptible) ====
+# ==== Robust background updater ====
 def background_updater():
-    global current_data, menu_active, stop_threads
+    """
+    Background thread that periodically fetches hive data.
+    Only reconnects if actual connectivity fails.
+    Safe to interrupt with `stop_threads = True`.
+    """
+    global current_data, data_fresh, menu_active, stop_threads
 
     utime.sleep(5)
+    print("[BG] Background updater stkarted")
 
-    while not stop_threads:  # exit cleanly when stop_threads = True
+    def ping_test(host="8.8.8.8", port=53, timeout=2):
+        """Return True if we can reach the host (basic connectivity test)."""
         try:
-            if not menu_active:
-                if wifi_utils.is_connected():
-                    draw_hourglass(lcd, True)
-                    data = get_hive_data()
-                    if data:
-                        with data_lock:
-                            global current_data, data_fresh
-                            current_data = data
-                            data_fresh = True
-                    draw_hourglass(lcd, False)
-                else:
-                    draw_hourglass(lcd, False)
-                    draw_error(lcd, "Wi-Fi Error")
-            # else → paused for menus
-        except Exception as e:
-            print("Error during background update:", e)
-            draw_hourglass(lcd, False)
-            draw_error(lcd, "Update Error")
+            s = wifi_utils.socket.socket()
+            s.settimeout(timeout)
+            s.connect((host, port))
+            s.close()
+            return True
+        except:
+            return False
 
-        update_period = settings_config.get_setting("update_period")
-        for i in range(update_period):
-            utime.sleep(1)
+    while not stop_threads:
+        try:
+            # Only fetch if menu is not active
+            if not menu_active:
+                print("[BG] Checking Wi-Fi connection...")
+                if wifi_utils.is_connected() and ping_test():
+                    print("[BG] Wi-Fi OK, fetching hive data...")
+                    try:
+                        data = None
+                        for attempt in range(3):
+                            try:
+                                data = get_hive_data()
+                                break
+                            except Exception as e:
+                                print(f"[BG] Fetch attempt {attempt+1} failed:", e)
+                                utime.sleep(1)
+
+                        if data is not None:
+                            with data_lock:
+                                current_data = data
+                                data_fresh = True
+                                print("[BG] Fetched data:", data)
+                        else:
+                            print("[BG] Failed to fetch hive data after retries")
+                            draw_error(lcd, "Fetch Failed")
+                    except Exception as e:
+                        print("[BG] Unexpected fetch error:", e)
+                        draw_error(lcd, "Fetch Error")
+                else:
+                    print("[BG] Wi-Fi not reachable, reconnecting...")
+                    draw_error(lcd, "Wi-Fi reconnect")
+                    if wifi_utils.connect_to_wifi(timeout=10):
+                        print("[BG] Reconnected to Wi-Fi")
+                    else:
+                        print("[BG] Wi-Fi reconnect failed")
+                        draw_error(lcd, "Wi-Fi Error")
+
+        except Exception as e:
+            print("[BG] Unexpected background error:", e)
+            draw_error(lcd, "BG Error")
+
+        # Wait according to update_period (or exit early if stop_threads/menu_active)
+        with settings_lock:
+            update_period = SETTINGS_CACHE.get("update_period", 300)
+        for _ in range(update_period):
             if stop_threads or menu_active:
                 break
+            utime.sleep(1)
 
 # ==== Loading screen (hourglass) ====
 def show_loading_screen():
@@ -185,15 +236,15 @@ def show_loading_screen():
 def settings_menu():
     global menu_active
     menu_active = True
-    settings = settings_config.load_settings()
+    with settings_lock:
+        settings = SETTINGS_CACHE.copy()
 
     options = [
         "Autoscroll",
         "Update Period",
         "Brightness Level",
         "Units (C/F)",
-        "Wifi Reconnect",
-        "Back"
+        "Wifi Reconnect"
     ]
     idx = 0
 
@@ -201,15 +252,15 @@ def settings_menu():
         result = scroll_menu("Settings", options, start_idx=idx)
 
         if isinstance(result, tuple) and result[0] == "BACK":
-            idx = len(options) - 1
-            continue
+            return
 
         if result == "Back":
             return
 
         elif result == "Autoscroll":
             settings["autoscroll"] = not settings.get("autoscroll", True)
-            settings_config.save_settings(settings)
+            with settings_lock:
+                SETTINGS_CACHE.update(settings)
             lcd.fill(lcd_display.colour(0,0,0))
             status = "Enabled" if settings["autoscroll"] else "Disabled"
             lcd.text(f"{status}", 10, 60, lcd_display.colour(255,255,0))
@@ -236,7 +287,8 @@ def settings_menu():
                     lcd.show()
                 elif BTN_BACK.value() == 0:
                     wait_release(BTN_BACK)
-                    settings_config.save_settings(settings)
+                    with settings_lock:
+                        SETTINGS_CACHE.update(settings)
                     break
 
         elif result == "Brightness Level":
@@ -256,7 +308,8 @@ def settings_menu():
                     settings["brightness"] = max(10, settings.get("brightness", 100) - 10)
                 elif BTN_BACK.value() == 0:
                     wait_release(BTN_BACK)
-                    settings_config.save_settings(settings)
+                    with settings_lock:
+                        SETTINGS_CACHE.update(settings)
                     break
                 bl.duty_u16(int(settings["brightness"] / 100 * 65535))
                 lcd.text(f"{settings['brightness']:3d}% ", 40, 60, lcd_display.colour(255,255,255))
@@ -265,7 +318,8 @@ def settings_menu():
         elif result == "Units (C/F)":
             current = settings.get("units", "C")
             settings["units"] = "F" if current == "C" else "C"
-            settings_config.save_settings(settings)
+            with settings_lock:
+                SETTINGS_CACHE.update(settings)
             lcd.fill(lcd_display.colour(0,0,0))
             lcd.text(f"Units: {settings['units']}", 10, 60, lcd_display.colour(255,255,0))
             lcd.show()
@@ -273,7 +327,8 @@ def settings_menu():
 
         elif result == "Wifi Reconnect":
             settings["wifi_auto_reconnect"] = not settings.get("wifi_auto_reconnect", True)
-            settings_config.save_settings(settings)
+            with settings_lock:
+                SETTINGS_CACHE.update(settings)
             lcd.fill(lcd_display.colour(0,0,0))
             status = "Enabled" if settings["wifi_auto_reconnect"] else "Disabled"
             lcd.text(f"Auto-Reconnect {status}", 5, 60, lcd_display.colour(255,255,0))
@@ -287,6 +342,9 @@ def scroll_menu(title, options, start_idx=0):
     idx = start_idx
     top = 0
     items_per_page = 5
+    scroll_offset = 0
+    scroll_pause_until = 0
+    last_scroll = utime.ticks_ms()
 
     while True:
         lcd.fill(lcd_display.colour(0, 0, 0))
@@ -297,10 +355,49 @@ def scroll_menu(title, options, start_idx=0):
                 break
             y = 28 + i * 18
             if j == idx:
-                lcd.fill_rect(6, y - 2, 108, 14, lcd_display.colour(0, 100, 200))
-                lcd.text(options[j], 10, y, lcd_display.colour(255, 255, 255))
+                max_chars = CONTENT_W // 8
+                text_len = len(options[j])
+                max_scroll = max(0, text_len - max_chars)
+
+                now = utime.ticks_ms()
+
+                if max_scroll > 0:
+                    if scroll_pause_until:
+                        # Currently pausing
+                        if utime.ticks_diff(now, scroll_pause_until) <= 0:
+                            # Pause finished → jump back to start
+                            scroll_offset = 0
+                            scroll_pause_until = 0
+                    elif utime.ticks_diff(now, last_scroll) > 250:
+                        last_scroll = now
+                        scroll_offset += 1
+
+                        if scroll_offset >= max_scroll:
+                            scroll_offset = max_scroll
+                            scroll_pause_until = utime.ticks_add(now, 6000)  # pause at end
+                else:
+                    scroll_offset = 0
+                
+                lcd.fill_rect(CONTENT_X - 2, y - 2, CONTENT_W + 4, 14, lcd_display.colour(0, 100, 200))
+                draw_text_clipped(
+                    options[j],
+                    CONTENT_X,
+                    y,
+                    CONTENT_W,
+                    lcd_display.colour(255, 255, 255),
+                    scroll_offset
+                )
+
+
             else:
-                lcd.text(options[j], 10, y, lcd_display.colour(200, 200, 200))
+                # 🔧 DRAW NON-HIGHLIGHTED ITEMS
+                lcd.text(
+                    options[j],
+                    CONTENT_X,
+                    y,
+                    lcd_display.colour(200, 200, 200)
+                )
+
         button_hint()
         lcd.show()
 
@@ -313,12 +410,16 @@ def scroll_menu(title, options, start_idx=0):
             wait_release(BTN_UP)
             last_press = utime.ticks_ms()
             idx = (idx - 1) % len(options)
+            scroll_offset = 0
+            scroll_pause_until = 0
             if idx < top:
                 top = idx
         elif BTN_DOWN.value() == 0:
             wait_release(BTN_DOWN)
             last_press = utime.ticks_ms()
             idx = (idx + 1) % len(options)
+            scroll_offset = 0
+            scroll_pause_until = 0
             if idx >= top + items_per_page:
                 top = idx - items_per_page + 1
         elif BTN_SELECT.value() == 0:
@@ -337,20 +438,19 @@ def display_sensor_loop(mode):
 
     menu_active = False
     print(f"Displaying {mode} data...")
+    
+    wait_start = utime.ticks_ms()
+    while True:
+        with data_lock:
+            if current_data:
+                break
+        if utime.ticks_diff(utime.ticks_ms(), wait_start) > 15000:  # 15s timeout
+            lcd.fill(lcd_display.colour(0,0,0))
+            lcd.text("No data", 30, 60, lcd_display.colour(255,0,0))
+            lcd.show()
+            break
+        utime.sleep_ms(200)
 
-    # --- Initial load if no data yet ---
-    if not current_data:
-        show_loading_screen()
-        utime.sleep(0.5)
-        try:
-            with data_lock:
-                current_data = get_hive_data()
-            data_fresh = True
-            wifi_error = False
-        except Exception as e:
-            print("Error loading data:", e)
-            wifi_error = True
-            current_data = []
 
     # --- Continuous display loop ---
     while True:
@@ -360,7 +460,8 @@ def display_sensor_loop(mode):
         except:
             hives_copy = []
         
-        settings = settings_config.load_settings()
+        with settings_lock:
+            settings = SETTINGS_CACHE.copy()
         autoscroll = settings.get("autoscroll", True)
 
         if not hives_copy:
@@ -443,8 +544,8 @@ def main_menu():
         result = scroll_menu("Main Menu", options, start_idx=idx)
 
         if isinstance(result, tuple) and result[0] == "BACK":
-            idx = len(options) - 1
-            continue
+            menu_active = False
+            return   
 
         if result == "View Sensors":
             result2 = view_sensors_menu()
@@ -458,54 +559,69 @@ def main_menu():
         elif result == "Wifi Settings":
             wifi_setup.main_menu()
         elif result == "Reset Device":
-            if STATE_FILE in os.listdir():
+            try:
                 os.remove(STATE_FILE)
+            except OSError:
+                pass
             lcd.fill(lcd_display.colour(0, 0, 0))
             lcd.text("Device Reset!", 20, 60, lcd_display.colour(255, 0, 0))
             lcd.show()
             utime.sleep(2)
             machine.reset()
         elif result == "Exit":
-            lcd.fill(lcd_display.colour(0, 0, 0))
-            lcd.text("Goodbye!", 40, 60, lcd_display.colour(255, 255, 0))
-            lcd.show()
-            utime.sleep(1)
-            bl = machine.PWM(machine.Pin(lcd_display.BL))
-            bl.duty_u16(0)
-            stop_all_threads()
-            print("Interrupted safely.")
+            # --- Uncomment below if exit should "shut down display"
+#             lcd.fill(lcd_display.colour(0, 0, 0))
+#             lcd.text("Goodbye!", 40, 60, lcd_display.colour(255, 255, 0))
+#             lcd.show()
+#             utime.sleep(1)
+#             bl = machine.PWM(machine.Pin(lcd_display.BL))
+#             bl.duty_u16(0)
+#             stop_all_threads()
+#             print("Interrupted safely.")
+            
+            menu_active = False
             return
 
 # ==== Main ====
 def main():
     global background_thread_started, stop_threads
 
+    print("[MAIN] Starting main()")
     show_splash(IMAGE_FILE)
 
     try:
+        # First-time setup (optional for testing, can skip)
         if is_first_time():
+            print("[MAIN] First time setup detected")
             show_first_time_message()
-            wifi_setup.main_menu()
+            # Comment out Wi-Fi setup temporarily to test thread
+            # wifi_setup.main_menu()
             mark_setup_complete()
 
-        # Try to resume last viewed screen
-        state = load_state()
-        last_mode = state.get("last_sensor_mode")
+        global SETTINGS_CACHE
+        SETTINGS_CACHE = settings_config.load_settings()
+        print("[MAIN] Settings loaded:", SETTINGS_CACHE)
 
-        if last_mode:
-            print(f"Resuming last mode: {last_mode}")
-            display_sensor_loop(last_mode)
-            
-         # Start background updater if not already running
+        # Start background updater once
         if not background_thread_started:
-            _thread.start_new_thread(background_updater, ())
-            background_thread_started = True
+            try:
+                _thread.start_new_thread(background_updater, ())
+                print("[MAIN] Background updater thread started")
+                background_thread_started = True
+            except Exception as e:
+                print("[MAIN] Failed to start background thread:", e)
 
-        # If BACK pressed from that mode → show menu
-        main_menu()
+        # Resume last viewed dashboard
+        while True:
+            state = load_state()
+            last_mode = state.get("last_sensor_mode", "sensor_all")
+            print("[MAIN] Resuming dashboard mode:", last_mode)
+            display_sensor_loop(last_mode)
+            print("[MAIN] Returning to main menu")
+            main_menu()
 
     except KeyboardInterrupt:
-        print("\nKeyboard interrupt detected — stopping threads.")
+        print("[MAIN] Keyboard interrupt detected — stopping threads")
         stop_threads = True
         utime.sleep(0.5)
         raise

@@ -13,23 +13,27 @@ DEFAULT_SETTINGS = {
     "wifi_auto_reconnect": True   # Attempt Wi-Fi reconnect automatically
 }
 
-
 def load_settings():
-    """Load settings from JSON or create with defaults if missing."""
-    if SETTINGS_FILE not in os.listdir():
-        save_settings(DEFAULT_SETTINGS)
-        return DEFAULT_SETTINGS.copy()
     try:
         with open(SETTINGS_FILE, "r") as f:
             loaded = json.load(f)
-        # Merge any missing keys with defaults (for version upgrades)
-        for key, val in DEFAULT_SETTINGS.items():
-            if key not in loaded:
-                loaded[key] = val
-        return loaded
-    except Exception as e:
-        print("Error loading settings:", e)
+    except OSError:
+        # File missing or filesystem temporarily unavailable
+        save_settings(DEFAULT_SETTINGS)
         return DEFAULT_SETTINGS.copy()
+    except ValueError:
+        # Corrupt JSON
+        print("Settings JSON corrupted, resetting to defaults")
+        save_settings(DEFAULT_SETTINGS)
+        return DEFAULT_SETTINGS.copy()
+
+    # Merge defaults (for upgrades)
+    for key, val in DEFAULT_SETTINGS.items():
+        if key not in loaded:
+            loaded[key] = val
+
+    return loaded
+
 
 
 def save_settings(settings):

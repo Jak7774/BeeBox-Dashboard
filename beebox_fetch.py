@@ -2,7 +2,6 @@ import ure
 import urequests
 import network
 import time
-import wifi_config # With Wifi and URL
 import wifi_utils # Wifi Connection Function
 
 # ================= Fetch & Parse HTML =================

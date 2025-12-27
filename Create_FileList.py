@@ -37,16 +37,23 @@ with open(CONFIG_FILE, "r") as f:
 local_version = config.get("version", "0.0.0")
 
 # ----------------------
-# 2. Scan local files & compute hashes
+# 2. Scan local files & compute hashes (skip directories)
 # ----------------------
 local_files = {}
 for root, dirs, files in os.walk(PROJECT_FOLDER):
+    # Remove ignored directories
     dirs[:] = [d for d in dirs if d not in IGNORE]
     for file in files:
+        # Skip ignored files
         if file in IGNORE:
             continue
-        rel_path = os.path.relpath(os.path.join(root, file), PROJECT_FOLDER).replace("\\", "/")
-        local_files[rel_path] = sha256_file(os.path.join(root, file))
+        abs_path = os.path.join(root, file)
+        # Ensure it's a file, not a directory
+        if not os.path.isfile(abs_path):
+            continue
+        # Relative path with forward slashes
+        rel_path = os.path.relpath(abs_path, PROJECT_FOLDER).replace("\\", "/")
+        local_files[rel_path] = sha256_file(abs_path)
 
 # ----------------------
 # 3. Fetch previous file_list.json from GitHub
@@ -66,22 +73,21 @@ for path, hash_val in local_files.items():
 # 5. Update version in config.json if needed
 # ----------------------
 if files_to_update:
-    # Increment patch version
     major, minor, patch = map(int, local_version.split("."))
     patch += 1
     new_version = f"{major}.{minor}.{patch}"
-    
-    # Save new version to config.json
+
+    # Save new version
     config["version"] = new_version
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
-    
+
     print(f"Version updated: {local_version} → {new_version}")
 else:
     print("No changes detected. Version stays the same.")
 
 # ----------------------
-# 6. Write new file_list.json
+# 6. Write new file_list.json (only files)
 # ----------------------
 with open(OUTPUT_FILE, "w") as f:
     json.dump({"files": files_to_update}, f, indent=4)

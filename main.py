@@ -55,7 +55,15 @@ last_ota_check = 0
 CONTENT_X = 8
 CONTENT_W = 96   # leaves space for button hints
 
+# ==== Screen power ====
+last_activity = utime.time()
+screen_state = "ON"   # ON | DIM | OFF
+
 # ==== Setup / state ====
+def record_activity():
+    global last_activity
+    last_activity = utime.time()
+
 def is_first_time():
     try:
         with open(STATE_FILE, "r") as f:
@@ -84,6 +92,7 @@ def save_state(state):
 
 # ==== Splash screen ====
 def show_splash(image_path):
+    check_screen_power() # To Dim Screen
     lcd.fill(0xFFFF)
     lcd_display.display_rgb_image(
         lcd, image_path,
@@ -113,6 +122,38 @@ def draw_text_clipped(text, x, y, width, colour, scroll_offset=0):
     lcd.text(visible, x, y, colour)
     return max_chars
 
+def check_screen_power():
+    global screen_state
+
+    with settings_lock:
+        timeout_hours = SETTINGS_CACHE.get("screen_timeout_hours", 2)
+
+    if timeout_hours == 0: # 0 = Never Timeout (always-on)
+        return
+    
+    dim_after = timeout_hours * 3600
+    off_after = dim_after + 30 * 60
+
+    elapsed = utime.time() - last_activity
+    bl = machine.PWM(machine.Pin(lcd_display.BL))
+
+    if screen_state == "ON" and elapsed > dim_after:
+        dim_pct = state.get("screen_dim_percent", 20)
+        bl.duty_u16(int(dim_pct / 100 * 65535))
+        screen_state = "DIM"
+
+    elif screen_state == "DIM" and elapsed > off_after:
+        bl.duty_u16(0)
+        lcd.fill(0)
+        lcd.show()
+        screen_state = "OFF"
+
+    elif screen_state != "ON" and elapsed < 2:
+        with settings_lock:
+            brightness = SETTINGS_CACHE.get("brightness", 100)
+        bl.duty_u16(int(brightness / 100 * 65535))
+        screen_state = "ON"
+
 # ==== First-time setup message ====
 def show_first_time_message():
     lcd.fill(lcd_display.colour(0, 0, 0))
@@ -128,6 +169,7 @@ def show_first_time_message():
 
 # ==== Button helpers ====
 def wait_release(pin):
+    record_activity() # For Screen Timeout
     while pin.value() == 0:
         utime.sleep_ms(10)
 
@@ -266,6 +308,7 @@ def settings_menu():
         "Autoscroll",
         "Update Period",
         "Brightness Level",
+        "Screen Timeout",
         "Units (C/F)",
         "Wifi Reconnect"
     ]
@@ -338,6 +381,46 @@ def settings_menu():
                 lcd.text(f"{settings['brightness']:3d}% ", 40, 60, lcd_display.colour(255,255,255))
                 lcd.show()
 
+        elif result == "Screen Timeout":
+            lcd.fill(lcd_display.colour(0,0,0))
+            lcd.text("Screen timeout:", 5, 20, lcd_display.colour(255,255,0))
+
+            def draw_value(val):
+                label = "Never" if val == 0 else f"{val} hrs"
+                lcd.text(label + "   ", 30, 60, lcd_display.colour(255,255,255))
+                lcd.show()
+
+            draw_value(settings.get("screen_timeout_hours", 2))
+
+            lcd.text("UP/DN change", 20, 90, lcd_display.colour(150,150,150))
+            lcd.text("BACK:Save", 30, 110, lcd_display.colour(150,150,150))
+
+            while True:
+                if BTN_UP.value() == 0:
+                    wait_release(BTN_UP)
+                    cur = settings.get("screen_timeout_hours", 2)
+                    if cur == 0:
+                        settings["screen_timeout_hours"] = 1
+                    else:
+                        settings["screen_timeout_hours"] = min(24, cur + 1)
+
+                elif BTN_DOWN.value() == 0:
+                    wait_release(BTN_DOWN)
+                    cur = settings.get("screen_timeout_hours", 2)
+                    if cur <= 1:
+                        settings["screen_timeout_hours"] = 0  # Never
+                    else:
+                        settings["screen_timeout_hours"] = cur - 1
+
+                elif BTN_BACK.value() == 0:
+                    wait_release(BTN_BACK)
+                    with settings_lock:
+                        SETTINGS_CACHE.update(settings)
+                    break
+
+                draw_value(settings["screen_timeout_hours"])
+
+
         elif result == "Units (C/F)":
             current = settings.get("units", "C")
             settings["units"] = "F" if current == "C" else "C"
@@ -361,6 +444,7 @@ def settings_menu():
 # ==== Menu ====
 def scroll_menu(title, options, start_idx=0):
     global last_press
+    check_screen_power() # Check to Dim Screen
     lcd.fill(lcd_display.colour(0, 0, 0))
     idx = start_idx
     top = 0
@@ -458,6 +542,8 @@ def scroll_menu(title, options, start_idx=0):
 # ==== Sensor display ====
 def display_sensor_loop(mode):
     global menu_active, current_data, data_fresh, wifi_error
+
+    check_screen_power() # Check to Dim Screen
 
     menu_active = False
     print(f"Displaying {mode} data...")

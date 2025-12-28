@@ -21,6 +21,31 @@ RUNTIME_CONFIG_KEYS = {
 # ------------------------
 # Utility helpers
 # ------------------------
+def walk(path):
+    """
+    MicroPython-compatible replacement for os.walk()
+    Yields (root, dirs, files)
+    """
+    dirs = []
+    files = []
+
+    for name in os.listdir(path):
+        full = path + "/" + name
+        try:
+            mode = os.stat(full)[0]
+        except OSError:
+            continue
+
+        if mode & 0x4000:  # directory
+            dirs.append(name)
+        else:
+            files.append(name)
+
+    yield path, dirs, files
+
+    for d in dirs:
+        for x in walk(path + "/" + d):
+            yield x
 
 def ensure_dir(path):
     parts = path.split("/")
@@ -194,7 +219,7 @@ def apply_update():
 
     ensure_dir(OLD_DIR)
 
-    for root, dirs, files in os.walk(UPDATE_DIR):
+    for root, dirs, files in walk(UPDATE_DIR):
         for name in files:
             src = root + "/" + name
             dst = src.replace(UPDATE_DIR + "/", "")
@@ -232,15 +257,6 @@ def apply_update():
 
     # Update version in config
     cfg = load_config()
-    remote_cfg = fetch_json(cfg["github_repo_url"] + "config.json")
-
-    # Preserve runtime-only keys
-    for k in RUNTIME_CONFIG_KEYS:
-        if k in cfg:
-            remote_cfg[k] = cfg[k]
-
-    # Always keep version from remote
-    cfg = remote_cfg
 
     # Request reboot via main
     cfg["pending_reboot"] = True

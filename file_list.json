@@ -1,10 +1,6 @@
 {
     "files": [
         {
-            "path": "file_list.json",
-            "sha256": "69d6ca8e7a6fc029838b51708f2c3e42b3db534bdc4f38fd272e4a4e980361f4"
-        },
-        {
             "path": "main.py",
             "sha256": "2db7b05832aba8e7d638c4472bf035d365b060ee50e1629848bb463814fe780c"
         },
@@ -25,4 +21,5 @@
             "sha256": "7270e8d5ad75424cb2b14644df160711b917a9076148da78c0cb0348bbe2aace"
         }
     ]
+
 }

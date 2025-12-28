@@ -4,7 +4,7 @@ import machine
 import hashlib
 import json
 
-CONFIG_FILE = "config.json"
+CONFIG_FILE = "secret_config.json"
 _cached_key = None
 
 def _load_device_phrase():

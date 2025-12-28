@@ -264,4 +264,3 @@ def rollback(file_list):
                 print("[OTA] Restored:", path)
             except Exception as e:
                 print("[OTA] Restore failed:", path, e)
-

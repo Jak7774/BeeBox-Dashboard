@@ -19,6 +19,16 @@ def sha256_file(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
 
+def sha256_config_canonical(path):
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    for k in ["setup_complete", "last_sensor_mode", "pending_reboot"]:
+        data.pop(k, None)
+
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
 def fetch_github_json(url):
     try:
         r = requests.get(url, timeout=10)
@@ -53,7 +63,12 @@ for root, dirs, files in os.walk(PROJECT_FOLDER):
             continue
         # Relative path with forward slashes
         rel_path = os.path.relpath(abs_path, PROJECT_FOLDER).replace("\\", "/")
-        local_files[rel_path] = sha256_file(abs_path)
+        
+        if rel_path == "config.json":
+            local_files[rel_path] = sha256_config_canonical(abs_path)
+        else:
+            local_files[rel_path] = sha256_file(abs_path)
+
 
 # ----------------------
 # 3. Fetch previous file_list.json from GitHub

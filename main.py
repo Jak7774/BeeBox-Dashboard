@@ -14,7 +14,7 @@ from beebox_fetch import get_hive_data
 from beebox_temp_display import display_temp_quadrants
 from beebox_humid_display import display_humidity_halves
 from beebox_weight_display import display_weight_single
-import ota # To Update Scripts
+from ota import OTA_FLAG, path_exists, apply_update, safe_ota
 
 STATE_FILE = "config.json"
 IMAGE_FILE = "Images/BeeBox.rgb"
@@ -35,13 +35,19 @@ last_press = 0
 initial_fetch_complete = False
 menu_active = False
 background_thread_started = False
-updating_data = False
-wifi_error = False
 stop_threads = False
 lcd = lcd_display.lcd
 data_lock = _thread.allocate_lock()
 current_data = []
 data_fresh = False
+
+# ===== Screen power =====
+last_activity = utime.time()
+screen_state = "ON"   # ON | DIM | OFF
+
+# ==== Screen Globals ===
+CONTENT_X = 8
+CONTENT_W = 96   # leaves space for button hints
 
 # ===== Background fetch =====
 HIVE_FETCH_INTERVAL_SEC = 30 * 60  # 30 minutes
@@ -51,19 +57,13 @@ SAFE_FETCH_DELAY = 5  # seconds between retries
 # ==== OTA timing ====
 last_ota_check = 0
 
-# ==== Screen Globals ===
-CONTENT_X = 8
-CONTENT_W = 96   # leaves space for button hints
+# ==== OTA boot-time installer ====
+if path_exists(OTA_FLAG):
+    print("[MAIN] OTA pending detected — applying update")
+    apply_update()
 
-# ==== Screen power ====
-last_activity = utime.time()
-screen_state = "ON"   # ON | DIM | OFF
 
 # ==== Setup / state ====
-def record_activity():
-    global last_activity
-    last_activity = utime.time()
-
 def is_first_time():
     try:
         with open(STATE_FILE, "r") as f:
@@ -92,7 +92,6 @@ def save_state(state):
 
 # ==== Splash screen ====
 def show_splash(image_path):
-    check_screen_power() # To Dim Screen
     lcd.fill(0xFFFF)
     lcd_display.display_rgb_image(
         lcd, image_path,
@@ -122,24 +121,29 @@ def draw_text_clipped(text, x, y, width, colour, scroll_offset=0):
     lcd.text(visible, x, y, colour)
     return max_chars
 
+# ==== Screen helpers ====
+def record_activity():
+    global last_activity
+    last_activity = utime.time()
+
 def check_screen_power():
     global screen_state
 
     with settings_lock:
         timeout_hours = SETTINGS_CACHE.get("screen_timeout_hours", 2)
+        brightness = SETTINGS_CACHE.get("brightness", 100)
 
-    if timeout_hours == 0: # 0 = Never Timeout (always-on)
-        return
-    
+    if timeout_hours == 0:
+        return  # Never timeout
+
+    elapsed = utime.time() - last_activity
     dim_after = timeout_hours * 3600
     off_after = dim_after + 30 * 60
 
-    elapsed = utime.time() - last_activity
     bl = machine.PWM(machine.Pin(lcd_display.BL))
 
     if screen_state == "ON" and elapsed > dim_after:
-        dim_pct = state.get("screen_dim_percent", 20)
-        bl.duty_u16(int(dim_pct / 100 * 65535))
+        bl.duty_u16(int(0.2 * 65535))
         screen_state = "DIM"
 
     elif screen_state == "DIM" and elapsed > off_after:
@@ -149,8 +153,6 @@ def check_screen_power():
         screen_state = "OFF"
 
     elif screen_state != "ON" and elapsed < 2:
-        with settings_lock:
-            brightness = SETTINGS_CACHE.get("brightness", 100)
         bl.duty_u16(int(brightness / 100 * 65535))
         screen_state = "ON"
 
@@ -169,7 +171,7 @@ def show_first_time_message():
 
 # ==== Button helpers ====
 def wait_release(pin):
-    record_activity() # For Screen Timeout
+    record_activity()
     while pin.value() == 0:
         utime.sleep_ms(10)
 
@@ -249,8 +251,9 @@ def background_updater():
 
                 if now - last_ota_check > interval_sec:
                     print("[BG] OTA check triggered")
-                    ota.safe_ota()
+                    safe_ota()
                     last_ota_check = now
+
             except Exception as e:
                 print("[BG] OTA error:", e)
 
@@ -264,18 +267,15 @@ def background_updater():
                 break
             utime.sleep(1)
 
+# ==== Reboot handler ====
 def reboot_if_pending():
-    try:
-        state = load_state()
-        if state.get("pending_reboot", False):
-            print("[MAIN] OTA update complete — rebooting")
-            state["pending_reboot"] = False
-            save_state(state)
-            utime.sleep(1)
-            machine.reset()
-    except Exception as e:
-        print("[MAIN] Reboot check failed:", e)
-
+    state = load_state()
+    if state.get("pending_reboot"):
+        state["pending_reboot"] = False
+        save_state(state)
+        utime.sleep(1)
+        machine.reset()
+        
 # ==== Loading screen (hourglass) ====
 def show_loading_screen():
     lcd = lcd_display.lcd
@@ -308,7 +308,6 @@ def settings_menu():
         "Autoscroll",
         "Update Period",
         "Brightness Level",
-        "Screen Timeout",
         "Units (C/F)",
         "Wifi Reconnect"
     ]
@@ -381,46 +380,6 @@ def settings_menu():
                 lcd.text(f"{settings['brightness']:3d}% ", 40, 60, lcd_display.colour(255,255,255))
                 lcd.show()
 
-        elif result == "Screen Timeout":
-            lcd.fill(lcd_display.colour(0,0,0))
-            lcd.text("Screen timeout:", 5, 20, lcd_display.colour(255,255,0))
-
-            def draw_value(val):
-                label = "Never" if val == 0 else f"{val} hrs"
-                lcd.text(label + "   ", 30, 60, lcd_display.colour(255,255,255))
-                lcd.show()
-
-            draw_value(settings.get("screen_timeout_hours", 2))
-
-            lcd.text("UP/DN change", 20, 90, lcd_display.colour(150,150,150))
-            lcd.text("BACK:Save", 30, 110, lcd_display.colour(150,150,150))
-
-            while True:
-                if BTN_UP.value() == 0:
-                    wait_release(BTN_UP)
-                    cur = settings.get("screen_timeout_hours", 2)
-                    if cur == 0:
-                        settings["screen_timeout_hours"] = 1
-                    else:
-                        settings["screen_timeout_hours"] = min(24, cur + 1)
-
-                elif BTN_DOWN.value() == 0:
-                    wait_release(BTN_DOWN)
-                    cur = settings.get("screen_timeout_hours", 2)
-                    if cur <= 1:
-                        settings["screen_timeout_hours"] = 0  # Never
-                    else:
-                        settings["screen_timeout_hours"] = cur - 1
-
-                elif BTN_BACK.value() == 0:
-                    wait_release(BTN_BACK)
-                    with settings_lock:
-                        SETTINGS_CACHE.update(settings)
-                    break
-
-                draw_value(settings["screen_timeout_hours"])
-
-
         elif result == "Units (C/F)":
             current = settings.get("units", "C")
             settings["units"] = "F" if current == "C" else "C"
@@ -444,7 +403,6 @@ def settings_menu():
 # ==== Menu ====
 def scroll_menu(title, options, start_idx=0):
     global last_press
-    check_screen_power() # Check to Dim Screen
     lcd.fill(lcd_display.colour(0, 0, 0))
     idx = start_idx
     top = 0
@@ -541,9 +499,7 @@ def scroll_menu(title, options, start_idx=0):
 
 # ==== Sensor display ====
 def display_sensor_loop(mode):
-    global menu_active, current_data, data_fresh, wifi_error
-
-    check_screen_power() # Check to Dim Screen
+    global menu_active, current_data, data_fresh
 
     menu_active = False
     print(f"Displaying {mode} data...")
@@ -716,6 +672,8 @@ def main():
         # Resume last viewed dashboard
         while True:
             reboot_if_pending()
+            check_screen_power()
+            utime.sleep(1)
             state = load_state()
             last_mode = state.get("last_sensor_mode", "sensor_all")
             print("[MAIN] Resuming dashboard mode:", last_mode)
@@ -744,3 +702,4 @@ if __name__ == "__main__":
         stop_all_threads()
         utime.sleep(1)
         print("Stopped safely. You can now edit files again.")
+

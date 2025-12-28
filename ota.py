@@ -1,23 +1,38 @@
+# ===== ota.py =====
 import urequests as requests
 import ujson
 import os
-import time
+import utime
 import ubinascii
 import hashlib
+import machine
 
 CONFIG_FILE = "config.json"
 UPDATE_DIR = "UPDATE"
 OLD_DIR = "OLD"
+OTA_FLAG = "OTA_PENDING"
+
+RUNTIME_CONFIG_KEYS = {
+    "setup_complete",
+    "last_sensor_mode",
+    "pending_reboot"
+}
 
 # ------------------------
 # Utility helpers
 # ------------------------
 
 def ensure_dir(path):
-    try:
-        os.mkdir(path)
-    except OSError:
-        pass
+    parts = path.split("/")
+    current = ""
+    for p in parts:
+        if not p:
+            continue
+        current += p + "/"
+        try:
+            os.mkdir(current)
+        except OSError:
+            pass
 
 def load_config():
     with open(CONFIG_FILE) as f:
@@ -27,17 +42,28 @@ def save_config(cfg):
     with open(CONFIG_FILE, "w") as f:
         ujson.dump(cfg, f)
 
-def fetch_json(url):
-    r = requests.get(url)
-    data = r.json()
-    r.close()
-    return data
-
 def fetch_file(url, dest):
+    # Ensure parent directories exist
+    dir_path = "/".join(dest.split("/")[:-1])
+    if dir_path:
+        ensure_dir(dir_path)
+
     r = requests.get(url)
+    if r.status_code != 200:
+        raise Exception("Failed to fetch %s (HTTP %d)" % (url, r.status_code))
+
     with open(dest, "wb") as f:
         f.write(r.content)
     r.close()
+
+def fetch_json(url):
+    r = requests.get(url)
+    try:
+        if r.status_code != 200:
+            raise Exception("HTTP %d" % r.status_code)
+        return ujson.loads(r.text)
+    finally:
+        r.close()
 
 def sha256_file(path):
     h = hashlib.sha256()
@@ -49,39 +75,61 @@ def sha256_file(path):
             h.update(chunk)
     return ubinascii.hexlify(h.digest()).decode()
 
+def sha256_json_canonical(path):
+    """
+    Hash JSON after removing runtime-only keys
+    and serializing deterministically.
+    """
+    with open(path, "r") as f:
+        data = ujson.load(f)
+
+    for k in RUNTIME_CONFIG_KEYS:
+        data.pop(k, None)
+
+    # Canonical JSON: sorted keys, no whitespace
+    canonical = ujson.dumps(data, sort_keys=True)
+    h = hashlib.sha256(canonical.encode())
+    return ubinascii.hexlify(h.digest()).decode()
+
+def path_exists(path):
+    try:
+        os.stat(path)
+        return True
+    except OSError:
+        return False
+
 # ------------------------
-# OTA logic
+# Step 1: Download & verify update
 # ------------------------
 
-def ota_update():
+def download_and_verify_update():
+    """
+    Download all files to UPDATE_DIR and verify hashes.
+    Returns True if update available and downloaded.
+    """
     cfg = load_config()
     repo = cfg["github_repo_url"]
     local_version = cfg.get("version", "0.0.0")
 
     print("[OTA] Current version:", local_version)
 
-    # Fetch remote config.json
     remote_cfg = fetch_json(repo + "config.json")
     remote_version = remote_cfg.get("version")
 
     if remote_version == local_version:
         print("[OTA] Already up to date")
-        return
+        return False
 
     print("[OTA] New version available:", remote_version)
 
-    # Fetch file list
     file_list = fetch_json(repo + "file_list.json").get("files", [])
     if not file_list:
         print("[OTA] No files listed for update")
-        return
+        return False
 
     ensure_dir(UPDATE_DIR)
     ensure_dir(OLD_DIR)
 
-    # ------------------------
-    # Step 1: Download & verify hashes
-    # ------------------------
     for entry in file_list:
         path = entry["path"]
         expected_hash = entry["sha256"]
@@ -94,58 +142,46 @@ def ota_update():
         print("[OTA] Downloading", path)
         fetch_file(repo + path, update_path)
 
-        actual_hash = sha256_file(update_path)
+        if path == "config.json":
+            actual_hash = sha256_json_canonical(update_path)
+        else:
+            actual_hash = sha256_file(update_path)
+            
         if actual_hash != expected_hash:
             print("[OTA] Hash mismatch:", path)
             raise Exception("Download verification failed")
 
-    # ------------------------
-    # Step 2: Backup current files
-    # ------------------------
-    for entry in file_list:
-        path = entry["path"]
-        if path in os.listdir():
-            ensure_dir("/".join((OLD_DIR + "/" + path).split("/")[:-1]))
-            os.rename(path, OLD_DIR + "/" + path)
+    print("[OTA] All files downloaded and verified")
+    return True
 
-    # ------------------------
-    # Step 3: Replace files
-    # ------------------------
-    for entry in file_list:
-        path = entry["path"]
-        os.rename(UPDATE_DIR + "/" + path, path)
+# ------------------------
+# Step 2: Safe trigger OTA
+# ------------------------
 
-    # ------------------------
-    # Step 4: Final verification
-    # ------------------------
-    for entry in file_list:
-        if not path_exists(entry["path"]):
-            raise Exception("Post-update verification failed")
-
-    # ------------------------
-    # Step 5: Update local version
-    # ------------------------
-    print("[OTA] Update successful →", remote_version)
-    
-    cfg["version"] = remote_version
-    cfg["pending_reboot"] = True
-    save_config(cfg)
-
-    print("[OTA] Update applied, reboot required")
-
-def path_exists(path):
-    try:
-        os.stat(path)
-        return True
-    except OSError:
-        return False
-    
-# Update Files
 def safe_ota():
+    """
+    Trigger OTA:
+    - Downloads and verifies files
+    - Sets OTA_PENDING flag
+    - Reboots device
+    """
     try:
-        ota_update()
+        updated = download_and_verify_update()
+        if not updated:
+            print("[OTA] No update needed")
+            return
+
+        # Write OTA pending flag
+        with open(OTA_FLAG, "w") as f:
+            f.write("1")
+
+        print("[OTA] OTA pending, rebooting to apply update")
+        utime.sleep(1)
+        machine.reset()
+
     except Exception as e:
         print("[OTA] FAILED:", e)
+        # Optional rollback if some files partially downloaded
         try:
             cfg = load_config()
             repo = cfg["github_repo_url"]
@@ -154,14 +190,75 @@ def safe_ota():
         except Exception as re:
             print("[OTA] Rollback failed:", re)
 
+# ------------------------
+# Step 3: Apply update at boot
+# ------------------------
+
+def apply_update():
+    """
+    Called at boot if OTA_PENDING exists.
+    Moves files from UPDATE_DIR to root, backs up old files.
+    """
+    print("[OTA] Applying update at boot...")
+
+    ensure_dir(OLD_DIR)
+
+    for root, dirs, files in os.walk(UPDATE_DIR):
+        for name in files:
+            src = root + "/" + name
+            dst = src.replace(UPDATE_DIR + "/", "")
+
+            # Backup existing file
+            dst_dir = "/".join(dst.split("/")[:-1])
+            if dst_dir:
+                ensure_dir(dst_dir)
+
+            if path_exists(dst):
+                backup_path = OLD_DIR + "/" + dst
+                backup_dir = "/".join(backup_path.split("/")[:-1])
+                if backup_dir:
+                    ensure_dir(backup_dir)
+                try:
+                    os.rename(dst, backup_path)
+                    print("[OTA] Backed up:", dst)
+                except:
+                    print("[OTA] Backup failed:", dst)
+
+            # Move new file
+            os.rename(src, dst)
+            print("[OTA] Updated:", dst)
+
+    # Cleanup
+    try:
+        os.remove(OTA_FLAG)
+    except:
+        pass
+
+    try:
+        os.rmdir(UPDATE_DIR)
+    except:
+        pass
+
+    # Update version in config
+    cfg = load_config()
+    remote_cfg = fetch_json(cfg["github_repo_url"] + "config.json")
+    cfg["version"] = remote_cfg.get("version", cfg.get("version", "0.0.0"))
+    cfg["pending_reboot"] = False
+    save_config(cfg)
+
+    print("[OTA] Update applied successfully. Rebooting...")
+    utime.sleep(1)
+    machine.reset()
+
+# ------------------------
+# Rollback
+# ------------------------
 
 def rollback(file_list):
-    print("[OTA] Rolling back updated files")
-
+    print("[OTA] Rolling back updated files...")
     for entry in file_list:
         path = entry["path"]
         old_path = OLD_DIR + "/" + path
-
         if path_exists(old_path):
             try:
                 if path_exists(path):
@@ -170,5 +267,4 @@ def rollback(file_list):
                 print("[OTA] Restored:", path)
             except Exception as e:
                 print("[OTA] Restore failed:", path, e)
-
 

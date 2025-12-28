@@ -25,7 +25,7 @@ RUNTIME_CONFIG_KEYS = {
 def ensure_dir(path):
     parts = path.split("/")
     current = ""
-    for p in parts:
+    for p in parts[:-1]:
         if not p:
             continue
         current += p + "/"
@@ -255,6 +255,8 @@ def rollback(file_list):
     print("[OTA] Rolling back updated files...")
     for entry in file_list:
         path = entry["path"]
+        if path == "file_list.json": # Shouldn't replace file_list.json
+            continue
         old_path = OLD_DIR + "/" + path
         if path_exists(old_path):
             try:
@@ -264,3 +266,4 @@ def rollback(file_list):
                 print("[OTA] Restored:", path)
             except Exception as e:
                 print("[OTA] Restore failed:", path, e)
+

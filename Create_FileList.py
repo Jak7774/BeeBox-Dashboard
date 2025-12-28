@@ -9,7 +9,7 @@ import requests
 PROJECT_FOLDER = "."              # Local repo folder
 OUTPUT_FILE = "file_list.json"    # File list to generate
 CONFIG_FILE = "config.json"       # Config file containing version
-IGNORE = ["OLD", "UPDATE", ".git", "__pycache__"]
+IGNORE = ["OLD", "UPDATE", ".git", "__pycache__", "file_list.json"]
 GITHUB_FILE_LIST_URL = "https://raw.githubusercontent.com/jak7774/BeeBox-Dashboard/main/file_list.json"
 
 # ----------------------
@@ -59,10 +59,16 @@ local_files = {}
 for root, dirs, files in os.walk(PROJECT_FOLDER):
     # Remove ignored directories
     dirs[:] = [d for d in dirs if d not in IGNORE]
+
     for file in files:
-        # Skip ignored files
+        # Explicitly skip OTA metadata
+        if file == OUTPUT_FILE:
+            continue
+
+        # Skip ignored names
         if file in IGNORE:
             continue
+        
         abs_path = os.path.join(root, file)
         # Ensure it's a file, not a directory
         if not os.path.isfile(abs_path):

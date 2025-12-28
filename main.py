@@ -666,6 +666,9 @@ def main_menu():
 # ==== Main ====
 def main():
     global background_thread_started, stop_threads
+    
+    stop_threads = False
+    background_thread_started = False
 
     print("[MAIN] Starting main()")
     show_splash(IMAGE_FILE)
@@ -724,3 +727,4 @@ if __name__ == "__main__":
         stop_all_threads()
         utime.sleep(1)
         print("Stopped safely. You can now edit files again.")
+

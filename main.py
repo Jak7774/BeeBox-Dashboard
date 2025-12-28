@@ -269,10 +269,32 @@ def background_updater():
 
 # ==== Reboot handler ====
 def reboot_if_pending():
+    """
+    Checks if an OTA update is pending and applies it.
+    Works both for Option A (running main loop) and Option B (boot-time OTA).
+    """
     state = load_state()
-    if state.get("pending_reboot"):
+    ota_flag_exists = path_exists(OTA_FLAG)
+
+    if state.get("pending_reboot") or ota_flag_exists:
+        print("[MAIN] Pending OTA update detected — applying update")
+        try:
+            apply_update()  # Moves files from UPDATE/ to root, backs up old files
+        except Exception as e:
+            print("[MAIN] OTA apply_update() failed:", e)
+            return  # continue main loop, will retry on next loop
+
+        # Clear flags after successful application
         state["pending_reboot"] = False
         save_state(state)
+
+        if ota_flag_exists:
+            try:
+                os.remove(OTA_FLAG)
+            except OSError:
+                pass
+
+        print("[MAIN] OTA applied — rebooting now")
         utime.sleep(1)
         machine.reset()
         
@@ -702,3 +724,4 @@ if __name__ == "__main__":
         stop_all_threads()
         utime.sleep(1)
         print("Stopped safely. You can now edit files again.")
+

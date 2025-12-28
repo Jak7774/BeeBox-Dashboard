@@ -87,7 +87,9 @@ def sha256_json_canonical(path):
         data.pop(k, None)
 
     # Canonical JSON: sorted keys, no whitespace
-    canonical = ujson.dumps(data, sort_keys=True)
+    items = [(k, data[k]) for k in sorted(data)]
+    canonical = ujson.dumps({k: v for k, v in items})
+    
     h = hashlib.sha256(bytes(canonical, "utf-8"))
     return ubinascii.hexlify(h.digest()).decode()
 
@@ -169,6 +171,10 @@ def safe_ota():
         cfg = load_config()
         cfg["pending_reboot"] = True
         save_config(cfg)
+        
+        # Create OTA flag to trigger apply_update()
+        with open(OTA_FLAG, "w") as f:
+            f.write("1")
 
         print("[OTA] Update ready. Reboot will occur via main loop.")
 
@@ -258,3 +264,4 @@ def rollback(file_list):
                 print("[OTA] Restored:", path)
             except Exception as e:
                 print("[OTA] Restore failed:", path, e)
+

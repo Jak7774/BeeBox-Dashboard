@@ -702,4 +702,3 @@ if __name__ == "__main__":
         stop_all_threads()
         utime.sleep(1)
         print("Stopped safely. You can now edit files again.")
-

@@ -88,7 +88,7 @@ def sha256_json_canonical(path):
 
     # Canonical JSON: sorted keys, no whitespace
     canonical = ujson.dumps(data, sort_keys=True)
-    h = hashlib.sha256(canonical.encode())
+    h = hashlib.sha256(bytes(canonical, "utf-8"))
     return ubinascii.hexlify(h.digest()).decode()
 
 def path_exists(path):
@@ -159,36 +159,21 @@ def download_and_verify_update():
 # ------------------------
 
 def safe_ota():
-    """
-    Trigger OTA:
-    - Downloads and verifies files
-    - Sets OTA_PENDING flag
-    - Reboots device
-    """
     try:
         updated = download_and_verify_update()
         if not updated:
             print("[OTA] No update needed")
             return
 
-        # Write OTA pending flag
-        with open(OTA_FLAG, "w") as f:
-            f.write("1")
+        # Signal main loop to reboot safely
+        cfg = load_config()
+        cfg["pending_reboot"] = True
+        save_config(cfg)
 
-        print("[OTA] OTA pending, rebooting to apply update")
-        utime.sleep(1)
-        machine.reset()
+        print("[OTA] Update ready. Reboot will occur via main loop.")
 
     except Exception as e:
         print("[OTA] FAILED:", e)
-        # Optional rollback if some files partially downloaded
-        try:
-            cfg = load_config()
-            repo = cfg["github_repo_url"]
-            file_list = fetch_json(repo + "file_list.json").get("files", [])
-            rollback(file_list)
-        except Exception as re:
-            print("[OTA] Rollback failed:", re)
 
 # ------------------------
 # Step 3: Apply update at boot
@@ -242,13 +227,19 @@ def apply_update():
     # Update version in config
     cfg = load_config()
     remote_cfg = fetch_json(cfg["github_repo_url"] + "config.json")
-    cfg["version"] = remote_cfg.get("version", cfg.get("version", "0.0.0"))
-    cfg["pending_reboot"] = False
-    save_config(cfg)
 
-    print("[OTA] Update applied successfully. Rebooting...")
-    utime.sleep(1)
-    machine.reset()
+    # Preserve runtime-only keys
+    for k in RUNTIME_CONFIG_KEYS:
+        if k in cfg:
+            remote_cfg[k] = cfg[k]
+
+    # Always keep version from remote
+    cfg = remote_cfg
+
+    # Request reboot via main
+    cfg["pending_reboot"] = True
+    save_config(cfg)
+    print("[OTA] Update applied successfully; reboot deferred to main")
 
 # ------------------------
 # Rollback
@@ -267,4 +258,3 @@ def rollback(file_list):
                 print("[OTA] Restored:", path)
             except Exception as e:
                 print("[OTA] Restore failed:", path, e)
-

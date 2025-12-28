@@ -3,5 +3,5 @@
     "setup_complete": true,
     "check_interval_hours": 24,
     "last_sensor_mode": "sensor_temp",
-    "version": "1.0.2"
+    "version": "1.0.1"
 }

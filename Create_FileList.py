@@ -23,11 +23,17 @@ def sha256_config_canonical(path):
     with open(path, "r") as f:
         data = json.load(f)
 
+    # Remove runtime-only keys (must match OTA exactly)
     for k in ["setup_complete", "last_sensor_mode", "pending_reboot"]:
         data.pop(k, None)
 
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()
+    # Manual key sorting to match MicroPython logic
+    ordered = {k: data[k] for k in sorted(data)}
+
+    # NO separators argument — let Python behave closer to ujson
+    canonical = json.dumps(ordered)
+
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 def fetch_github_json(url):
     try:

@@ -405,6 +405,11 @@ def settings_menu():
             timeout = settings.get("screen_timeout_hours", 8)
             while True:
                 display_value = f"{timeout}h" if timeout != 0 else "Never"
+                
+                # Clear the area where the value will go
+                lcd.rect(40, 60, 60, 20, lcd_display.colour(0,0,0), fill=True)  # x, y, w, h
+
+                # Draw updated value
                 lcd.text(f"{display_value}   ", 40, 60, lcd_display.colour(255,255,255))
                 lcd.text("UP:+1h DN:-1h", 10, 90, lcd_display.colour(150,150,150))
                 lcd.text("BACK:Save", 25, 110, lcd_display.colour(150,150,150))

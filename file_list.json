@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "files": [
     {
       "path": "Images/BeeBox.rgb",
@@ -83,7 +83,7 @@
     },
     {
       "path": "beebox_fetch.py",
-      "sha256": "0f70f1df926d27d3c1a00187c06fdfab56ce7d165c2a6f9307a335f29e4e7ab0"
+      "sha256": "815c643ec85c1c3bbb5f7baf5db07bbd96c276f074031239d0cda12a910f27c0"
     },
     {
       "path": "beebox_humid_display.py",
@@ -103,19 +103,15 @@
     },
     {
       "path": "main.py",
-      "sha256": "48ac39e37ea070ad5df88ec9b9cb02295ddacaf7da64d2c241772902207978e5"
+      "sha256": "2333aa33ef6bfb4f39d2ebb32bb1fc75caec904c0e6dd33b3d44ef5be8765390"
     },
     {
       "path": "ota.py",
       "sha256": "ed1724cad99b35834be7a13a19e4a9afc8f89fd447da807b946161e29cee4172"
     },
     {
-      "path": "secret_config.json",
-      "sha256": "034dd545bbd648cfbe1a479a2754966110a15e6ae603a761ffea038f3c4c435c"
-    },
-    {
       "path": "settings.json",
-      "sha256": "d42c220031b519b417ea4d117dcbe3fd375b5859dd2ba551596491d046859ff4"
+      "sha256": "a8bf660898b7991be54f8fe2ce48d9cd77cd505d06edd6b80a512d0a43d7ac83"
     },
     {
       "path": "settings_config.py",
@@ -139,7 +135,7 @@
     },
     {
       "path": "wifi_utils.py",
-      "sha256": "b09e27459e5661e7af32af65e5ff7fc73a2e9b04f301d1d64f520430cacf7309"
+      "sha256": "784d37a35d3f704ca756d01a85eb4808be1901889b5bbca85999156e6c26f350"
     }
   ]
 }

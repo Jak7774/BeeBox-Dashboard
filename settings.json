@@ -1,1 +1,8 @@
-{"autoscroll": true, "brightness": 100, "units": "C", "wifi_auto_reconnect": true, "update_period": 300}
+{
+    "autoscroll": true, 
+    "brightness": 100,
+    "screen_timeout_hours": 8,
+    "units": "C", 
+    "wifi_auto_reconnect": true, 
+    "update_period": 300
+}

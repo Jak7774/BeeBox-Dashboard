@@ -20,6 +20,7 @@ IGNORE_FILES = {
     OUTPUT_FILE,
     CONFIG_FILE,
     "Create_FileList.py",
+    "secret_config.json",
     "README.md",
 }
 

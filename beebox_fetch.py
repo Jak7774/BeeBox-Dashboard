@@ -104,7 +104,7 @@ def parse_html_by_hive(html):
 
 # ===== Fetch all hive data =====
 def get_hive_data():
-    wifi_utils.connect_to_wifi()
+    wifi_utils.ensure_wifi()
     html = fetch_webpage()
     if not html:
         #print("[DEBUG] fetch_webpage returned None")

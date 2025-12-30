@@ -119,6 +119,14 @@ def draw_text_clipped(text, x, y, width, colour, scroll_offset=0):
 def record_activity():
     global last_activity
     last_activity = utime.time()
+    
+    if screen_state == "OFF":
+        # Restore brightness
+        with settings_lock:
+            brightness = SETTINGS_CACHE.get("brightness", 100)
+        bl = machine.PWM(machine.Pin(lcd_display.BL))
+        bl.duty_u16(int(brightness / 100 * 65535))
+        screen_state = "ON"
 
 def check_screen_power():
     global screen_state
@@ -202,17 +210,6 @@ def background_updater():
                 utime.sleep(1)
                 continue  # Skip fetch if menu is active
 
-            print("[BG] Checking Wi-Fi connection...")
-            if not wifi_utils.is_connected():
-                print("[BG] Wi-Fi not connected, attempting reconnect...")
-                draw_error(lcd, "Wi-Fi reconnect")
-                if not wifi_utils.connect_to_wifi(timeout=10):
-                    print("[BG] Wi-Fi reconnect failed")
-                    draw_error(lcd, "Wi-Fi Error")
-                    utime.sleep(5)
-                    continue
-                print("[BG] Reconnected to Wi-Fi")
-
             # --- Fetch hive data safely ---
             data = None
             for attempt in range(SAFE_FETCH_RETRIES):
@@ -222,6 +219,7 @@ def background_updater():
                         break
                 except Exception as e:
                     print(f"[BG] Fetch attempt {attempt+1} failed:", e)
+                    wifi_utils.note_network_failure()   # 🔑 THIS IS CRITICAL
                     utime.sleep(SAFE_FETCH_DELAY)
 
             if data:
@@ -229,9 +227,14 @@ def background_updater():
                     current_data = data
                     data_fresh = True
                     print("[BG] Fetched hive data:", data)
+                
+                wifi_utils.WIFI_STATE["healthy"] = True   # latch good state
+                wifi_utils.WIFI_STATE["failures"] = 0     # reset failure counter
+                
                 initial_fetch_complete = True
             else:
                 print("[BG] Failed to fetch hive data after retries")
+                wifi_utils.note_network_failure()   # escalation point
                 draw_error(lcd, "Fetch Failed")
                 utime.sleep(5)
                 continue
@@ -324,6 +327,7 @@ def settings_menu():
         "Autoscroll",
         "Update Period",
         "Brightness Level",
+        "Screen Timeout",
         "Units (C/F)",
         "Wifi Reconnect"
     ]
@@ -357,16 +361,19 @@ def settings_menu():
             lcd.show()
             while True:
                 if BTN_UP.value() == 0:
+                    record_activity()
                     wait_release(BTN_UP)
                     settings["update_period"] += 300
                     lcd.text(f"{settings['update_period']//60:3d} ", 40, 60, lcd_display.colour(255,255,255))
                     lcd.show()
                 elif BTN_DOWN.value() == 0:
+                    record_activity()
                     wait_release(BTN_DOWN)
                     settings["update_period"] = max(300, settings["update_period"] - 300)
                     lcd.text(f"{settings['update_period']//60:3d} ", 40, 60, lcd_display.colour(255,255,255))
                     lcd.show()
                 elif BTN_BACK.value() == 0:
+                    record_activity()
                     wait_release(BTN_BACK)
                     with settings_lock:
                         SETTINGS_CACHE.update(settings)
@@ -382,12 +389,15 @@ def settings_menu():
             bl = machine.PWM(machine.Pin(lcd_display.BL))
             while True:
                 if BTN_UP.value() == 0:
+                    record_activity()
                     wait_release(BTN_UP)
                     settings["brightness"] = min(100, settings.get("brightness", 100) + 10)
                 elif BTN_DOWN.value() == 0:
+                    record_activity()
                     wait_release(BTN_DOWN)
                     settings["brightness"] = max(10, settings.get("brightness", 100) - 10)
                 elif BTN_BACK.value() == 0:
+                    record_activity()
                     wait_release(BTN_BACK)
                     with settings_lock:
                         SETTINGS_CACHE.update(settings)
@@ -395,6 +405,40 @@ def settings_menu():
                 bl.duty_u16(int(settings["brightness"] / 100 * 65535))
                 lcd.text(f"{settings['brightness']:3d}% ", 40, 60, lcd_display.colour(255,255,255))
                 lcd.show()
+        
+        elif result == "Screen Timeout":
+            lcd.fill(lcd_display.colour(0,0,0))
+            lcd.text("Screen Timeout:", 6, 20, lcd_display.colour(255,255,0))
+
+            timeout = settings.get("screen_timeout_hours", 8)
+            while True:
+                display_value = f"{timeout}h" if timeout != 0 else "Never"
+                lcd.text(f"{display_value}   ", 40, 60, lcd_display.colour(255,255,255))
+                lcd.text("UP:+1h DN:-1h", 10, 90, lcd_display.colour(150,150,150))
+                lcd.text("BACK:Save", 25, 110, lcd_display.colour(150,150,150))
+                lcd.show()
+
+                if BTN_UP.value() == 0:
+                    record_activity()
+                    wait_release(BTN_UP)
+                    if timeout == 24:
+                        timeout = 0  # Never
+                    else:
+                        timeout = min(24, timeout + 1)
+                elif BTN_DOWN.value() == 0:
+                    record_activity()
+                    wait_release(BTN_DOWN)
+                    if timeout == 0:
+                        timeout = 24
+                    else:
+                        timeout = max(1, timeout - 1)
+                elif BTN_BACK.value() == 0:
+                    record_activity()
+                    wait_release(BTN_BACK)
+                    settings["screen_timeout_hours"] = timeout
+                    with settings_lock:
+                        SETTINGS_CACHE.update(settings)
+                    break
 
         elif result == "Units (C/F)":
             current = settings.get("units", "C")
@@ -488,6 +532,7 @@ def scroll_menu(title, options, start_idx=0):
             continue
 
         if BTN_UP.value() == 0:
+            record_activity()
             wait_release(BTN_UP)
             last_press = utime.ticks_ms()
             idx = (idx - 1) % len(options)
@@ -496,6 +541,7 @@ def scroll_menu(title, options, start_idx=0):
             if idx < top:
                 top = idx
         elif BTN_DOWN.value() == 0:
+            record_activity()
             wait_release(BTN_DOWN)
             last_press = utime.ticks_ms()
             idx = (idx + 1) % len(options)
@@ -504,10 +550,12 @@ def scroll_menu(title, options, start_idx=0):
             if idx >= top + items_per_page:
                 top = idx - items_per_page + 1
         elif BTN_SELECT.value() == 0:
+            record_activity()
             wait_release(BTN_SELECT)
             last_press = utime.ticks_ms()
             return options[idx]
         elif BTN_BACK.value() == 0:
+            record_activity()
             wait_release(BTN_BACK)
             last_press = utime.ticks_ms()
             return ("BACK", idx)
@@ -561,14 +609,17 @@ def display_sensor_loop(mode):
             # Wait a few seconds, check for BACK
             for _ in range(50):
                 if BTN_BACK.value() == 0:
+                    record_activity()
                     wait_release(BTN_BACK)
                     menu_active = True
                     return
                 if not autoscroll:
                     if BTN_DOWN.value() == 0:
+                        record_activity()
                         wait_release(BTN_DOWN)
                         break  # next hive
                     elif BTN_UP.value() == 0:
+                        record_activity()
                         wait_release(BTN_UP)
                         break  # or wrap-around manually
                 utime.sleep_ms(100)

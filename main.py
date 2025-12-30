@@ -266,10 +266,6 @@ def background_updater():
 
 # ==== Reboot handler ====
 def reboot_if_pending():
-    """
-    Checks if an OTA update is pending and applies it.
-    Works both for Option A (running main loop) and Option B (boot-time OTA).
-    """
     state = load_state()
     ota_flag_exists = path_exists(OTA_FLAG)
 
@@ -290,6 +286,27 @@ def reboot_if_pending():
                 os.remove(OTA_FLAG)
             except OSError:
                 pass
+
+        # ---- NEW: empty UPDATE and OLD folders ----
+        from ota import UPDATE_DIR, OLD_DIR, path_exists
+        def empty_dir(path):
+            if not path_exists(path):
+                return
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    try:
+                        os.remove(os.path.join(root, f))
+                    except:
+                        print("[MAIN] Failed to remove file:", os.path.join(root, f))
+                for d in dirs:
+                    try:
+                        os.rmdir(os.path.join(root, d))
+                    except:
+                        print("[MAIN] Failed to remove dir:", os.path.join(root, d))
+
+        empty_dir(UPDATE_DIR)
+        empty_dir(OLD_DIR)
+        print("[MAIN] Cleared UPDATE and OLD folders")
 
         print("[MAIN] OTA applied — rebooting now")
         utime.sleep(1)

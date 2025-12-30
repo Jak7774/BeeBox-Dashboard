@@ -21,6 +21,7 @@ IGNORE_FILES = {
     CONFIG_FILE,
     "Create_FileList.py",
     "secret_config.json",
+    "wifi_config.bin",
     "README.md",
 }
 

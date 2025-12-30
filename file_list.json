@@ -1,5 +1,5 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "files": [
     {
       "path": "Images/BeeBox.rgb",
@@ -103,7 +103,7 @@
     },
     {
       "path": "main.py",
-      "sha256": "2333aa33ef6bfb4f39d2ebb32bb1fc75caec904c0e6dd33b3d44ef5be8765390"
+      "sha256": "4264abc29dca9fe721d12c1ecb00b7e096293d36863e69b6d8f339f89d527194"
     },
     {
       "path": "ota.py",
@@ -116,10 +116,6 @@
     {
       "path": "settings_config.py",
       "sha256": "b044050356a31a32267d8054af221726971c43dff52ab72635aef71f806e8316"
-    },
-    {
-      "path": "wifi_config.bin",
-      "sha256": "fd9b712c1d2b860c1103f2e1d1331156c9472fe1e0e8cae73de8989b6980e663"
     },
     {
       "path": "wifi_encryption.py",

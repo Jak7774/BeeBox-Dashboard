@@ -67,6 +67,28 @@ def path_exists(path):
     except OSError:
         return False
 
+def clear_folder(folder):
+    """Remove all files and subfolders in a folder"""
+    if not path_exists(folder):
+        return
+    for root, dirs, files in walk(folder):
+        for name in files:
+            try:
+                os.remove(root + "/" + name)
+            except:
+                pass
+        for d in dirs:	
+            subfolder = root + "/" + d
+            clear_folder(subfolder)  # recursively clear subfolders
+            try:
+                os.rmdir(subfolder)   # remove the empty subfolder
+            except:
+                pass
+
+# -----------------------------
+# Config helpers
+# -----------------------------
+
 def load_config():
     with open(CONFIG_FILE) as f:
         return ujson.load(f)
@@ -75,31 +97,22 @@ def save_config(cfg):
     with open(CONFIG_FILE, "w") as f:
         ujson.dump(cfg, f)
 
-def merge_remote_config():
+def merge_remote_config_stage():
     """
-    Merge GitHub config.json into local config.json
-    without overwriting device-owned runtime keys.
+    Fetch remote config but stage it in UPDATE/config.json
+    instead of merging immediately into live config.
     """
     cfg = load_config()
     repo = cfg["github_repo_url"]
-
     remote = fetch_json(repo + "config.json")
 
-    changed = False
+    # Save staged config to UPDATE folder
+    staged_path = UPDATE_DIR + "/config.json"
+    ensure_dir(UPDATE_DIR)
+    with open(staged_path, "w") as f:
+        ujson.dump(remote, f)
 
-    for key, value in remote.items():
-        if key in RUNTIME_CONFIG_KEYS:
-            continue
-
-        if cfg.get(key) != value:
-            cfg[key] = value
-            changed = True
-            print("[OTA] Config updated:", key, "→", value)
-
-    if changed:
-        save_config(cfg)
-
-    return changed, cfg.get("version"), remote.get("version")
+    return staged_path, cfg.get("version"), remote.get("version")
 
 # -------------------------------------------------
 # Hash helpers
@@ -113,19 +126,6 @@ def sha256_file(path):
             if not chunk:
                 break
             h.update(chunk)
-    return ubinascii.hexlify(h.digest()).decode()
-
-def sha256_json_canonical(path):
-    with open(path, "r") as f:
-        data = ujson.load(f)
-
-    for k in RUNTIME_CONFIG_KEYS:
-        data.pop(k, None)
-
-    ordered = {k: data[k] for k in sorted(data)}
-    canonical = ujson.dumps(ordered)
-
-    h = hashlib.sha256(bytes(canonical, "utf-8"))
     return ubinascii.hexlify(h.digest()).decode()
 
 # -------------------------------------------------
@@ -142,7 +142,8 @@ def fetch_json(url):
         r.close()
 
 def fetch_file(url, dest):
-    ensure_dir("/".join(dest.split("/")[:-1]))
+    folder = "/".join(dest.split("/")[:-1])
+    ensure_dir(folder)
     r = requests.get(url)
     if r.status_code != 200:
         raise RuntimeError("HTTP %d" % r.status_code)
@@ -153,23 +154,30 @@ def fetch_file(url, dest):
 # -------------------------------------------------
 # Step 1: Download & verify update
 # -------------------------------------------------
+
 def download_and_verify_update():
     cfg = load_config()
     repo = cfg["github_repo_url"]
-    local_version = cfg.get("version", "0.0.0")
+    
+    # Clear staging folders to prevent partial downloads
+    ensure_dir(UPDATE_DIR)
+    ensure_dir(OLD_DIR)
+    clear_folder(UPDATE_DIR)
+    clear_folder(OLD_DIR)
+
+    # Merge config but **do not overwrite local version yet**
+    staged_config_path, local_version, remote_version = merge_remote_config_stage()
 
     print("[OTA] Current version:", local_version)
-
+    
     manifest = fetch_json(repo + "file_list.json")
-    remote_version = manifest.get("version")
     files = manifest.get("files", [])
 
     if not remote_version or not files:
         raise RuntimeError("Invalid file_list.json")
 
+    # Stage config-only update without touching firmware files
     if remote_version == local_version:
-        # No firmware change, but still merge config if needed
-        config_changed, _, _ = merge_remote_config()
         if config_changed:
             print("[OTA] Config updated (no firmware change)")
         else:
@@ -178,9 +186,6 @@ def download_and_verify_update():
 
     print("[OTA] New firmware version available:", remote_version)
 
-    ensure_dir(UPDATE_DIR)
-    ensure_dir(OLD_DIR)
-
     for entry in files:
         path = entry["path"]
         expected = entry["sha256"]
@@ -188,12 +193,10 @@ def download_and_verify_update():
         dst = path
         tmp = UPDATE_DIR + "/" + path
 
-        # Skip unchanged firmware files
-        if path_exists(dst):
-            current_hash = sha256_file(dst)
-            if current_hash == expected:
-                print("[OTA] Skipping unchanged:", path)
-                continue
+        # Skip unchanged files
+        if path_exists(path) and sha256_file(path) == expected:
+            print("[OTA] Skipping unchanged:", path)
+            continue
 
         print("[OTA] Downloading:", path)
         fetch_file(repo + path, tmp)
@@ -204,11 +207,7 @@ def download_and_verify_update():
 
     print("[OTA] All required files downloaded and verified")
 
-    # ---- Now merge config AFTER staging files ----
-    config_changed, _, _ = merge_remote_config()
-
     # ---- Stage reboot ----
-    cfg = load_config()  # reload to make sure latest config is saved
     cfg["pending_reboot"] = True
     save_config(cfg)
 
@@ -240,11 +239,6 @@ def apply_update():
         return
 
     print("[OTA] Applying update at boot")
-
-    if not path_exists(UPDATE_DIR):
-        print("[OTA] UPDATE directory missing")
-        return
-
     ensure_dir(OLD_DIR)
 
     for root, dirs, files in walk(UPDATE_DIR):
@@ -266,17 +260,28 @@ def apply_update():
 
             os.rename(src, dst)
             print("[OTA] Updated:", dst)
-
+            
+    # Apply staged config
+    staged_cfg_path = UPDATE_DIR + "/config.json"
+    if path_exists(staged_cfg_path):
+        try:
+            staged_cfg = ujson.load(open(staged_cfg_path))
+            cfg = load_config()
+            for key, value in staged_cfg.items():
+                if key not in RUNTIME_CONFIG_KEYS:
+                    cfg[key] = value
+            save_config(cfg)
+            print("[OTA] Config updated after firmware apply")
+        except Exception as e:
+            print("[OTA] Failed to apply staged config:", e)
+            
     # Cleanup
     try:
         os.remove(OTA_FLAG)
     except:
         pass
-
-    try:
-        os.rmdir(UPDATE_DIR)
-    except:
-        pass
+    
+    clear_folder(UPDATE_DIR)
 
     print("[OTA] Update applied successfully")
 

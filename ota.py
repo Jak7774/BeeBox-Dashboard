@@ -177,10 +177,7 @@ def download_and_verify_update():
 
     # Stage config-only update without touching firmware files
     if remote_version == local_version:
-        if config_changed:
-            print("[OTA] Config updated (no firmware change)")
-        else:
-            print("[OTA] Already up to date")
+        print("[OTA] Already up to date")
         return False
 
     print("[OTA] New firmware version available:", remote_version)

@@ -107,7 +107,7 @@
     },
     {
       "path": "ota.py",
-      "sha256": "065aac598221661565ddae24c78269b08b633afa2eba90cc50f478c60ddcb699"
+      "sha256": "fe3ca7ae552ff635c75a97c6e00487120a0a1ce1b2f2bd8dcb63063d455d1570"
     },
     {
       "path": "settings.json",

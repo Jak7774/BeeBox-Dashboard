@@ -270,12 +270,14 @@ def apply_update():
             for key, value in staged_cfg.items():
                 if key not in RUNTIME_CONFIG_KEYS:
                     cfg[key] = value
+            cfg["pending_reboot"] = False
             save_config(cfg)
-            print("[OTA] Config updated after firmware apply")
+            print("[OTA] Config updated after firmware apply - Pending Reboot = FALSE")
         except Exception as e:
             print("[OTA] Failed to apply staged config:", e)
             
     # Cleanup    
     clear_folder(UPDATE_DIR)
     print("[OTA] Update applied successfully")
+
 

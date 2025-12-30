@@ -207,6 +207,7 @@ def download_and_verify_update():
     print("[OTA] All required files downloaded and verified")
 
     # ---- Stage reboot ----
+    cfg["version"] = remote_version
     cfg["pending_reboot"] = True
     save_config(cfg)
     return True

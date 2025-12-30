@@ -18,7 +18,9 @@ IGNORE_DIRS = {
 
 IGNORE_FILES = {
     OUTPUT_FILE,
+    CONFIG_FILE,
     "Create_FileList.py",
+    "README.md",
 }
 
 # ----------------------

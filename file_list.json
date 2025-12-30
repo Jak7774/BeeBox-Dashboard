@@ -74,10 +74,6 @@
       "sha256": "34f39ce9dfcaf5d2ef24a0d3402e7f109cd2603420074403fc1bf0f226a35b47"
     },
     {
-      "path": "README.md",
-      "sha256": "55a93c2afa59dcb8bfab71a99f7f9b37a9d2947933bfa9556055271775d7d3c3"
-    },
-    {
       "path": "Sensors_TextSummary.py",
       "sha256": "4d856fe2f01d00cb7398124a03e96e543189aa312dda5202bf3eeea9e92176da"
     },
@@ -102,10 +98,6 @@
       "sha256": "65b2bdaf9efa71a508e9e95e552b8b91028069ecf3fd547a59b7a3460e0cdc4f"
     },
     {
-      "path": "config.json",
-      "sha256": "62635d0268c43163a4bb73f309fb5c7efe0e6e45b6adccbbeaf404f9164fbbed"
-    },
-    {
       "path": "lcd_display.py",
       "sha256": "b0c7eaf3882ee8ec1e35d42332621686abfcac4c1507b9d4e8f230c686c1e063"
     },
@@ -115,7 +107,7 @@
     },
     {
       "path": "ota.py",
-      "sha256": "aca9b0dbc2bfcb09780103909e75a4670c8a745266a0868e689f018ae6b83fb7"
+      "sha256": "ed1724cad99b35834be7a13a19e4a9afc8f89fd447da807b946161e29cee4172"
     },
     {
       "path": "secret_config.json",

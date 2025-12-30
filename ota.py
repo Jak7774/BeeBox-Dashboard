@@ -75,6 +75,32 @@ def save_config(cfg):
     with open(CONFIG_FILE, "w") as f:
         ujson.dump(cfg, f)
 
+def merge_remote_config():
+    """
+    Merge GitHub config.json into local config.json
+    without overwriting device-owned runtime keys.
+    """
+    cfg = load_config()
+    repo = cfg["github_repo_url"]
+
+    remote = fetch_json(repo + "config.json")
+
+    changed = False
+
+    for key, value in remote.items():
+        if key in RUNTIME_CONFIG_KEYS:
+            continue
+
+        if cfg.get(key) != value:
+            cfg[key] = value
+            changed = True
+            print("[OTA] Config updated:", key, "→", value)
+
+    if changed:
+        save_config(cfg)
+
+    return changed, cfg.get("version"), remote.get("version")
+
 # -------------------------------------------------
 # Hash helpers
 # -------------------------------------------------
@@ -131,7 +157,9 @@ def fetch_file(url, dest):
 def download_and_verify_update():
     cfg = load_config()
     repo = cfg["github_repo_url"]
-    local_version = cfg.get("version", "0.0.0")
+
+    # ---- NEW: merge remote config first ----
+    config_changed, local_version, _ = merge_remote_config()
 
     print("[OTA] Current version:", local_version)
 
@@ -142,11 +170,15 @@ def download_and_verify_update():
     if not remote_version or not files:
         raise RuntimeError("Invalid file_list.json")
 
+    # ---- Config-only update ----
     if remote_version == local_version:
-        print("[OTA] Already up to date")
+        if config_changed:
+            print("[OTA] Config updated (no firmware change)")
+        else:
+            print("[OTA] Already up to date")
         return False
 
-    print("[OTA] New version available:", remote_version)
+    print("[OTA] New firmware version available:", remote_version)
 
     ensure_dir(UPDATE_DIR)
     ensure_dir(OLD_DIR)
@@ -158,13 +190,9 @@ def download_and_verify_update():
         dst = path
         tmp = UPDATE_DIR + "/" + path
 
-        # Skip unchanged files
+        # Skip unchanged firmware files
         if path_exists(dst):
-            if path == CONFIG_FILE:
-                current_hash = sha256_json_canonical(dst)
-            else:
-                current_hash = sha256_file(dst)
-
+            current_hash = sha256_file(dst)
             if current_hash == expected:
                 print("[OTA] Skipping unchanged:", path)
                 continue
@@ -172,18 +200,13 @@ def download_and_verify_update():
         print("[OTA] Downloading:", path)
         fetch_file(repo + path, tmp)
 
-        # Verify downloaded file
-        if path == CONFIG_FILE:
-            actual = sha256_json_canonical(tmp)
-        else:
-            actual = sha256_file(tmp)
-
+        actual = sha256_file(tmp)
         if actual != expected:
             raise RuntimeError("Hash mismatch: " + path)
 
     print("[OTA] All required files downloaded and verified")
 
-    # Signal apply at boot
+    # ---- Stage reboot ----
     cfg["pending_reboot"] = True
     save_config(cfg)
 

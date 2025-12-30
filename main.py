@@ -554,6 +554,7 @@ def scroll_menu(title, options, start_idx=0):
 
 
 # ==== Sensor display ====
+
 def display_sensor_loop(mode):
     global menu_active, current_data, data_fresh
 
@@ -562,6 +563,7 @@ def display_sensor_loop(mode):
     
     # --- Startup wait: do NOT timeout ---
     while not initial_fetch_complete:
+        reboot_if_pending()
         lcd.fill(lcd_display.colour(0, 0, 0))
         lcd.text("Connecting...", 20, 50, lcd_display.colour(200, 200, 200))
         lcd.show()
@@ -569,6 +571,7 @@ def display_sensor_loop(mode):
 
     # --- Continuous display loop ---
     while True:
+        reboot_if_pending()
         try:
             with data_lock:
                 hives_copy = current_data.copy()
@@ -588,6 +591,7 @@ def display_sensor_loop(mode):
             continue
 
         for hive in hives_copy:
+            reboot_if_pending()  
             # Display the relevant sensor mode for each hive
             if mode == "sensor_all":
                 display_on_lcd(hive["id"], hive["temperature"], hive["humidity"], hive["weight"])
@@ -601,17 +605,14 @@ def display_sensor_loop(mode):
             # Wait a few seconds, check for BACK
             for _ in range(50):
                 if BTN_BACK.value() == 0:
-                    record_activity()
                     wait_release(BTN_BACK)
                     menu_active = True
                     return
                 if not autoscroll:
                     if BTN_DOWN.value() == 0:
-                        record_activity()
                         wait_release(BTN_DOWN)
                         break  # next hive
                     elif BTN_UP.value() == 0:
-                        record_activity()
                         wait_release(BTN_UP)
                         break  # or wrap-around manually
                 utime.sleep_ms(100)
@@ -621,7 +622,7 @@ def display_sensor_loop(mode):
             data_fresh = False
             # Reload silently (no loading screen)
             continue
-
+        
 # ==== View Sensors Menu ====
 def view_sensors_menu():
     global menu_active

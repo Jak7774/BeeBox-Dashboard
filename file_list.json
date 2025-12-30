@@ -103,11 +103,11 @@
     },
     {
       "path": "main.py",
-      "sha256": "4264abc29dca9fe721d12c1ecb00b7e096293d36863e69b6d8f339f89d527194"
+      "sha256": "46f9909b622ce81f9a535657afb3c35742d73678b9fb6cafc432991bc1f3b208"
     },
     {
       "path": "ota.py",
-      "sha256": "d8f28ba473ec47dfb11d65c1b19db3dd9c56ede1317966fc98b761dfd91aacf4"
+      "sha256": "6d92cfbc347382a896c6c114dd8557220ec1de9d3762d30c2f376884727bb6d4"
     },
     {
       "path": "settings.json",

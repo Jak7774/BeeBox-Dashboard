@@ -8,7 +8,6 @@ import hashlib
 CONFIG_FILE = "config.json"
 UPDATE_DIR = "UPDATE"
 OLD_DIR = "OLD"
-OTA_FLAG = "OTA_PENDING"
 
 RUNTIME_CONFIG_KEYS = {
     "setup_complete",
@@ -210,10 +209,6 @@ def download_and_verify_update():
     # ---- Stage reboot ----
     cfg["pending_reboot"] = True
     save_config(cfg)
-
-    with open(OTA_FLAG, "w") as f:
-        f.write("1")
-
     return True
 
 # -------------------------------------------------
@@ -235,10 +230,15 @@ def safe_ota():
 # -------------------------------------------------
 
 def apply_update():
-    if not path_exists(OTA_FLAG):
+    cfg = load_config()
+    if not cfg.get("pending_reboot"):
         return
-
+    
     print("[OTA] Applying update at boot")
+    if not path_exists(UPDATE_DIR):
+        print("[OTA] UPDATE directory missing")
+        return
+    
     ensure_dir(OLD_DIR)
 
     for root, dirs, files in walk(UPDATE_DIR):
@@ -275,13 +275,7 @@ def apply_update():
         except Exception as e:
             print("[OTA] Failed to apply staged config:", e)
             
-    # Cleanup
-    try:
-        os.remove(OTA_FLAG)
-    except:
-        pass
-    
+    # Cleanup    
     clear_folder(UPDATE_DIR)
-
     print("[OTA] Update applied successfully")
 

@@ -153,13 +153,10 @@ def fetch_file(url, dest):
 # -------------------------------------------------
 # Step 1: Download & verify update
 # -------------------------------------------------
-
 def download_and_verify_update():
     cfg = load_config()
     repo = cfg["github_repo_url"]
-
-    # ---- NEW: merge remote config first ----
-    config_changed, local_version, _ = merge_remote_config()
+    local_version = cfg.get("version", "0.0.0")
 
     print("[OTA] Current version:", local_version)
 
@@ -170,8 +167,9 @@ def download_and_verify_update():
     if not remote_version or not files:
         raise RuntimeError("Invalid file_list.json")
 
-    # ---- Config-only update ----
     if remote_version == local_version:
+        # No firmware change, but still merge config if needed
+        config_changed, _, _ = merge_remote_config()
         if config_changed:
             print("[OTA] Config updated (no firmware change)")
         else:
@@ -206,7 +204,11 @@ def download_and_verify_update():
 
     print("[OTA] All required files downloaded and verified")
 
+    # ---- Now merge config AFTER staging files ----
+    config_changed, _, _ = merge_remote_config()
+
     # ---- Stage reboot ----
+    cfg = load_config()  # reload to make sure latest config is saved
     cfg["pending_reboot"] = True
     save_config(cfg)
 

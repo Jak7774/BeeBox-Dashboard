@@ -14,7 +14,7 @@ from beebox_fetch import get_hive_data
 from beebox_temp_display import display_temp_quadrants
 from beebox_humid_display import display_humidity_halves
 from beebox_weight_display import display_weight_single
-from ota import OTA_FLAG, path_exists, apply_update, safe_ota
+from ota import path_exists, apply_update, safe_ota
 
 STATE_FILE = "config.json"
 IMAGE_FILE = "Images/BeeBox.rgb"

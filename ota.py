@@ -2,10 +2,8 @@
 import urequests as requests
 import ujson
 import os
-import utime
 import ubinascii
 import hashlib
-import machine
 
 CONFIG_FILE = "config.json"
 UPDATE_DIR = "UPDATE"
@@ -18,25 +16,28 @@ RUNTIME_CONFIG_KEYS = {
     "pending_reboot"
 }
 
-# ------------------------
+# -------------------------------------------------
 # Utility helpers
-# ------------------------
+# -------------------------------------------------
+
 def walk(path):
-    """
-    MicroPython-compatible replacement for os.walk()
-    Yields (root, dirs, files)
-    """
+    """MicroPython-compatible os.walk()"""
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return
+
     dirs = []
     files = []
 
-    for name in os.listdir(path):
+    for name in names:
         full = path + "/" + name
         try:
             mode = os.stat(full)[0]
         except OSError:
             continue
 
-        if mode & 0x4000:  # directory
+        if mode & 0x4000:
             dirs.append(name)
         else:
             files.append(name)
@@ -50,14 +51,21 @@ def walk(path):
 def ensure_dir(path):
     parts = path.split("/")
     current = ""
-    for p in parts[:-1]:
+    for p in parts:
         if not p:
             continue
-        current += p + "/"
+        current = current + p + "/"
         try:
             os.mkdir(current)
         except OSError:
             pass
+
+def path_exists(path):
+    try:
+        os.stat(path)
+        return True
+    except OSError:
+        return False
 
 def load_config():
     with open(CONFIG_FILE) as f:
@@ -67,28 +75,9 @@ def save_config(cfg):
     with open(CONFIG_FILE, "w") as f:
         ujson.dump(cfg, f)
 
-def fetch_file(url, dest):
-    # Ensure parent directories exist
-    dir_path = "/".join(dest.split("/")[:-1])
-    if dir_path:
-        ensure_dir(dir_path)
-
-    r = requests.get(url)
-    if r.status_code != 200:
-        raise Exception("Failed to fetch %s (HTTP %d)" % (url, r.status_code))
-
-    with open(dest, "wb") as f:
-        f.write(r.content)
-    r.close()
-
-def fetch_json(url):
-    r = requests.get(url)
-    try:
-        if r.status_code != 200:
-            raise Exception("HTTP %d" % r.status_code)
-        return ujson.loads(r.text)
-    finally:
-        r.close()
+# -------------------------------------------------
+# Hash helpers
+# -------------------------------------------------
 
 def sha256_file(path):
     h = hashlib.sha256()
@@ -101,47 +90,57 @@ def sha256_file(path):
     return ubinascii.hexlify(h.digest()).decode()
 
 def sha256_json_canonical(path):
-    """
-    Hash JSON after removing runtime-only keys
-    and serializing deterministically.
-    """
     with open(path, "r") as f:
         data = ujson.load(f)
 
     for k in RUNTIME_CONFIG_KEYS:
         data.pop(k, None)
 
-    # Canonical JSON: sorted keys, no whitespace
-    items = [(k, data[k]) for k in sorted(data)]
-    canonical = ujson.dumps({k: v for k, v in items})
-    
+    ordered = {k: data[k] for k in sorted(data)}
+    canonical = ujson.dumps(ordered)
+
     h = hashlib.sha256(bytes(canonical, "utf-8"))
     return ubinascii.hexlify(h.digest()).decode()
 
-def path_exists(path):
-    try:
-        os.stat(path)
-        return True
-    except OSError:
-        return False
+# -------------------------------------------------
+# Network helpers
+# -------------------------------------------------
 
-# ------------------------
+def fetch_json(url):
+    r = requests.get(url)
+    try:
+        if r.status_code != 200:
+            raise RuntimeError("HTTP %d" % r.status_code)
+        return ujson.loads(r.text)
+    finally:
+        r.close()
+
+def fetch_file(url, dest):
+    ensure_dir("/".join(dest.split("/")[:-1]))
+    r = requests.get(url)
+    if r.status_code != 200:
+        raise RuntimeError("HTTP %d" % r.status_code)
+    with open(dest, "wb") as f:
+        f.write(r.content)
+    r.close()
+
+# -------------------------------------------------
 # Step 1: Download & verify update
-# ------------------------
+# -------------------------------------------------
 
 def download_and_verify_update():
-    """
-    Download all files to UPDATE_DIR and verify hashes.
-    Returns True if update available and downloaded.
-    """
     cfg = load_config()
     repo = cfg["github_repo_url"]
     local_version = cfg.get("version", "0.0.0")
 
     print("[OTA] Current version:", local_version)
 
-    remote_cfg = fetch_json(repo + "config.json")
-    remote_version = remote_cfg.get("version")
+    manifest = fetch_json(repo + "file_list.json")
+    remote_version = manifest.get("version")
+    files = manifest.get("files", [])
+
+    if not remote_version or not files:
+        raise RuntimeError("Invalid file_list.json")
 
     if remote_version == local_version:
         print("[OTA] Already up to date")
@@ -149,73 +148,77 @@ def download_and_verify_update():
 
     print("[OTA] New version available:", remote_version)
 
-    file_list = fetch_json(repo + "file_list.json").get("files", [])
-    if not file_list:
-        print("[OTA] No files listed for update")
-        return False
-
     ensure_dir(UPDATE_DIR)
     ensure_dir(OLD_DIR)
 
-    for entry in file_list:
+    for entry in files:
         path = entry["path"]
-        expected_hash = entry["sha256"]
+        expected = entry["sha256"]
 
-        update_path = f"{UPDATE_DIR}/{path}"
-        dir_path = "/".join(update_path.split("/")[:-1])
-        if dir_path:
-            ensure_dir(dir_path)
+        dst = path
+        tmp = UPDATE_DIR + "/" + path
 
-        print("[OTA] Downloading", path)
-        fetch_file(repo + path, update_path)
+        # Skip unchanged files
+        if path_exists(dst):
+            if path == CONFIG_FILE:
+                current_hash = sha256_json_canonical(dst)
+            else:
+                current_hash = sha256_file(dst)
 
-        if path == "config.json":
-            actual_hash = sha256_json_canonical(update_path)
+            if current_hash == expected:
+                print("[OTA] Skipping unchanged:", path)
+                continue
+
+        print("[OTA] Downloading:", path)
+        fetch_file(repo + path, tmp)
+
+        # Verify downloaded file
+        if path == CONFIG_FILE:
+            actual = sha256_json_canonical(tmp)
         else:
-            actual_hash = sha256_file(update_path)
-            
-        if actual_hash != expected_hash:
-            print("[OTA] Hash mismatch:", path)
-            raise Exception("Download verification failed")
+            actual = sha256_file(tmp)
 
-    print("[OTA] All files downloaded and verified")
+        if actual != expected:
+            raise RuntimeError("Hash mismatch: " + path)
+
+    print("[OTA] All required files downloaded and verified")
+
+    # Signal apply at boot
+    cfg["pending_reboot"] = True
+    save_config(cfg)
+
+    with open(OTA_FLAG, "w") as f:
+        f.write("1")
+
     return True
 
-# ------------------------
-# Step 2: Safe trigger OTA
-# ------------------------
+# -------------------------------------------------
+# Safe OTA trigger (called during runtime)
+# -------------------------------------------------
 
 def safe_ota():
     try:
         updated = download_and_verify_update()
-        if not updated:
-            print("[OTA] No update needed")
-            return
-
-        # Signal main loop to reboot safely
-        cfg = load_config()
-        cfg["pending_reboot"] = True
-        save_config(cfg)
-        
-        # Create OTA flag to trigger apply_update()
-        with open(OTA_FLAG, "w") as f:
-            f.write("1")
-
-        print("[OTA] Update ready. Reboot will occur via main loop.")
-
+        if updated:
+            print("[OTA] Update staged; reboot deferred to main loop")
+        else:
+            print("[OTA] No update required")
     except Exception as e:
         print("[OTA] FAILED:", e)
 
-# ------------------------
-# Step 3: Apply update at boot
-# ------------------------
+# -------------------------------------------------
+# Step 2: Apply update at boot
+# -------------------------------------------------
 
 def apply_update():
-    """
-    Called at boot if OTA_PENDING exists.
-    Moves files from UPDATE_DIR to root, backs up old files.
-    """
-    print("[OTA] Applying update at boot...")
+    if not path_exists(OTA_FLAG):
+        return
+
+    print("[OTA] Applying update at boot")
+
+    if not path_exists(UPDATE_DIR):
+        print("[OTA] UPDATE directory missing")
+        return
 
     ensure_dir(OLD_DIR)
 
@@ -224,23 +227,18 @@ def apply_update():
             src = root + "/" + name
             dst = src.replace(UPDATE_DIR + "/", "")
 
-            # Backup existing file
-            dst_dir = "/".join(dst.split("/")[:-1])
-            if dst_dir:
-                ensure_dir(dst_dir)
+            ensure_dir("/".join(dst.split("/")[:-1]))
 
+            # Backup existing file
             if path_exists(dst):
-                backup_path = OLD_DIR + "/" + dst
-                backup_dir = "/".join(backup_path.split("/")[:-1])
-                if backup_dir:
-                    ensure_dir(backup_dir)
+                backup = OLD_DIR + "/" + dst
+                ensure_dir("/".join(backup.split("/")[:-1]))
                 try:
-                    os.rename(dst, backup_path)
+                    os.rename(dst, backup)
                     print("[OTA] Backed up:", dst)
                 except:
                     print("[OTA] Backup failed:", dst)
 
-            # Move new file
             os.rename(src, dst)
             print("[OTA] Updated:", dst)
 
@@ -255,31 +253,5 @@ def apply_update():
     except:
         pass
 
-    # Update version in config
-    cfg = load_config()
-
-    # Request reboot via main
-    cfg["pending_reboot"] = True
-    save_config(cfg)
-    print("[OTA] Update applied successfully; reboot deferred to main")
-
-# ------------------------
-# Rollback
-# ------------------------
-
-def rollback(file_list):
-    print("[OTA] Rolling back updated files...")
-    for entry in file_list:
-        path = entry["path"]
-        if path == "file_list.json": # Shouldn't replace file_list.json
-            continue
-        old_path = OLD_DIR + "/" + path
-        if path_exists(old_path):
-            try:
-                if path_exists(path):
-                    os.remove(path)
-                os.rename(old_path, path)
-                print("[OTA] Restored:", path)
-            except Exception as e:
-                print("[OTA] Restore failed:", path, e)
+    print("[OTA] Update applied successfully")
 

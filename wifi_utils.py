@@ -7,6 +7,17 @@ from wifi_storage import load_wifi_credentials
 
 CONFIG_FILE = "wifi_config.bin"
 
+def has_internet(timeout=3):
+    try:
+        import socket
+        s = socket.socket()
+        s.settimeout(timeout)
+        s.connect(("8.8.8.8", 53))
+        s.close()
+        return True
+    except:
+        return False
+
 def _load_wifi_credentials():
     """Load and decrypt Wi-Fi credentials.
     Returns:
@@ -34,8 +45,16 @@ def connect_to_wifi(timeout=20):
         return False
 
     if wlan.isconnected():
-        print("Wi-Fi already connected:", wlan.ifconfig()[0])
-        return True
+        if has_internet():
+            print("Wi-Fi already connected and internet OK")
+            return True
+        else:
+            print("Wi-Fi connected but internet broken — resetting")
+            wlan.disconnect()
+            wlan.active(False)
+            time.sleep(1)
+            wlan.active(True)
+
 
     print("Connecting to Wi-Fi:", ssid)
 
@@ -64,3 +83,4 @@ def is_connected():
     """Return True if Wi-Fi is connected and active."""
     wlan = network.WLAN(network.STA_IF)
     return wlan.active() and wlan.isconnected()
+

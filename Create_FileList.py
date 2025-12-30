@@ -1,124 +1,112 @@
 import os
 import json
 import hashlib
-import requests
 
 # ----------------------
 # Config
 # ----------------------
-PROJECT_FOLDER = "."              # Local repo folder
-OUTPUT_FILE = "file_list.json"    # File list to generate
-CONFIG_FILE = "config.json"       # Config file containing version
-IGNORE = ["OLD", "UPDATE", ".git", "__pycache__", "file_list.json"]
-GITHUB_FILE_LIST_URL = "https://raw.githubusercontent.com/jak7774/BeeBox-Dashboard/main/file_list.json"
+PROJECT_FOLDER = "."              # Root of repo
+OUTPUT_FILE = "file_list.json"
+CONFIG_FILE = "config.json"
+
+IGNORE_DIRS = {
+    ".git",
+    "__pycache__",
+    "OLD",
+    "UPDATE"
+}
+
+IGNORE_FILES = {
+    OUTPUT_FILE,
+    "Create_FileList.py",
+}
 
 # ----------------------
-# Helper functions
+# Hash helpers
 # ----------------------
 def sha256_file(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
 
 def sha256_config_canonical(path):
+    """
+    Must match MicroPython OTA logic exactly
+    """
     with open(path, "r") as f:
         data = json.load(f)
 
-    # Remove runtime-only keys (must match OTA exactly)
+    # Remove runtime-only keys
     for k in ["setup_complete", "last_sensor_mode", "pending_reboot"]:
         data.pop(k, None)
 
-    # Manual key sorting to match MicroPython logic
+    # Sort keys deterministically
     ordered = {k: data[k] for k in sorted(data)}
 
-    # NO separators argument — let Python behave closer to ujson
+    # No separators, no indent (match ujson behaviour closely)
     canonical = json.dumps(ordered)
 
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-def fetch_github_json(url):
-    try:
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            return r.json()
-    except Exception as e:
-        print("Could not fetch from GitHub:", e)
-    return {"files": []}
-
 # ----------------------
-# 1. Load local version from config.json
+# Load version
 # ----------------------
 with open(CONFIG_FILE, "r") as f:
     config = json.load(f)
 
-local_version = config.get("version", "0.0.0")
+if "version" not in config:
+    raise RuntimeError("config.json must contain a 'version' field")
+
+version = config["version"]
+
+print(f"[BUILD] Generating file_list.json for version {version}")
 
 # ----------------------
-# 2. Scan local files & compute hashes (skip directories)
+# Walk project & hash files
 # ----------------------
-local_files = {}
+files_manifest = []
+
 for root, dirs, files in os.walk(PROJECT_FOLDER):
-    # Remove ignored directories
-    dirs[:] = [d for d in dirs if d not in IGNORE]
+    # Remove ignored directories in-place
+    dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
 
-    for file in files:
-        # Explicitly skip OTA metadata
-        if file == OUTPUT_FILE:
+    for filename in files:
+        if filename in IGNORE_FILES:
             continue
 
-        # Skip ignored names
-        if file in IGNORE:
-            continue
-        
-        abs_path = os.path.join(root, file)
-        # Ensure it's a file, not a directory
+        abs_path = os.path.join(root, filename)
+
+        # Skip non-files (just in case)
         if not os.path.isfile(abs_path):
             continue
-        # Relative path with forward slashes
-        rel_path = os.path.relpath(abs_path, PROJECT_FOLDER).replace("\\", "/")
-        
-        if rel_path == "config.json":
-            local_files[rel_path] = sha256_config_canonical(abs_path)
+
+        rel_path = os.path.relpath(abs_path, PROJECT_FOLDER)
+        rel_path = rel_path.replace("\\", "/")  # Windows safety
+
+        if rel_path == CONFIG_FILE:
+            sha = sha256_config_canonical(abs_path)
         else:
-            local_files[rel_path] = sha256_file(abs_path)
+            sha = sha256_file(abs_path)
 
+        files_manifest.append({
+            "path": rel_path,
+            "sha256": sha
+        })
 
-# ----------------------
-# 3. Fetch previous file_list.json from GitHub
-# ----------------------
-github_file_list = fetch_github_json(GITHUB_FILE_LIST_URL)
-github_hashes = {f["path"]: f.get("sha256", "") for f in github_file_list.get("files", [])}
-
-# ----------------------
-# 4. Determine changed files
-# ----------------------
-files_to_update = []
-for path, hash_val in local_files.items():
-    if github_hashes.get(path) != hash_val:
-        files_to_update.append({"path": path, "sha256": hash_val})
+# Sort for deterministic output
+files_manifest.sort(key=lambda x: x["path"])
 
 # ----------------------
-# 5. Update version in config.json if needed
+# Write file_list.json
 # ----------------------
-if files_to_update:
-    major, minor, patch = map(int, local_version.split("."))
-    patch += 1
-    new_version = f"{major}.{minor}.{patch}"
+with open(OUTPUT_FILE, "w", newline="\n") as f:
+    json.dump(
+        {
+            "version": version,
+            "files": files_manifest
+        },
+        f,
+        indent=2
+    )
 
-    # Save new version
-    config["version"] = new_version
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=4)
-
-    print(f"Version updated: {local_version} → {new_version}")
-else:
-    print("No changes detected. Version stays the same.")
-
-# ----------------------
-# 6. Write new file_list.json (only files)
-# ----------------------
-with open(OUTPUT_FILE, "w") as f:
-    json.dump({"files": files_to_update}, f, indent=4)
-
-print(f"{OUTPUT_FILE} created with {len(files_to_update)} changed files.")
-if not files_to_update:
-    print("No files need to be updated in OTA.")
+print(f"[BUILD] {OUTPUT_FILE} written")
+print(f"[BUILD] Total files: {len(files_manifest)}")

@@ -57,12 +57,6 @@ SAFE_FETCH_DELAY = 5  # seconds between retries
 # ==== OTA timing ====
 last_ota_check = 0
 
-# ==== OTA boot-time installer ====
-if path_exists(OTA_FLAG):
-    print("[MAIN] OTA pending detected — applying update")
-    apply_update()
-
-
 # ==== Setup / state ====
 def is_first_time():
     try:
@@ -666,9 +660,6 @@ def main_menu():
 # ==== Main ====
 def main():
     global background_thread_started, stop_threads
-    
-    stop_threads = False
-    background_thread_started = False
 
     print("[MAIN] Starting main()")
     show_splash(IMAGE_FILE)
@@ -726,5 +717,15 @@ if __name__ == "__main__":
         print("\nKeyboardInterrupt detected. Stopping background threads...")
         stop_all_threads()
         utime.sleep(1)
-        print("Stopped safely. You can now edit files again.")
+        
+        try:
+            wlan = network.WLAN(network.STA_IF)
+            wlan.disconnect()
+            wlan.active(False)
+            print("[MAIN] Wi-Fi shut down")
+        except:
+            pass
 
+        raise
+
+        print("Stopped safely. You can now edit files again.")
